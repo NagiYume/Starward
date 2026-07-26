@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Starward.Core;
 using Starward.Core.HoYoPlay;
+using Starward.Core.Hypergryph;
 using Starward.Features.GameLauncher;
 using Starward.Features.HoYoPlay;
 using System;
@@ -21,12 +22,15 @@ internal partial class GamePackageService
 
     private readonly GameLauncherService _gameLauncherService;
 
+    private readonly HypergryphLauncherClient _hypergryphLauncherClient;
 
-    public GamePackageService(ILogger<GamePackageService> logger, HoYoPlayService hoYoPlayService, GameLauncherService gameLauncherService)
+
+    public GamePackageService(ILogger<GamePackageService> logger, HoYoPlayService hoYoPlayService, GameLauncherService gameLauncherService, HypergryphLauncherClient hypergryphLauncherClient)
     {
         _logger = logger;
         _hoYoPlayService = hoYoPlayService;
         _gameLauncherService = gameLauncherService;
+        _hypergryphLauncherClient = hypergryphLauncherClient;
     }
 
 
@@ -68,6 +72,24 @@ internal partial class GamePackageService
         if (string.IsNullOrWhiteSpace(installPath))
         {
             return false;
+        }
+        if (HypergryphGameConstants.IsEndfield(gameId.GameBiz))
+        {
+            Version? localVersion = await _gameLauncherService.GetLocalGameVersionAsync(gameId, installPath);
+            HypergryphLatestGame latest = await _hypergryphLauncherClient.GetLatestEndfieldAsync(localVersion?.ToString());
+            HypergryphGamePatch? prePatch = latest.PrePatch;
+            if (prePatch is null || prePatch.DownloadParts.Count == 0)
+            {
+                return false;
+            }
+            HypergryphInstallMetadata? metadata = await HypergryphInstallMetadata.ReadAsync(installPath);
+            if (!string.Equals(metadata?.PredownloadFingerprint, prePatch.GetFingerprint(), StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+            string downloadDirectory = HypergryphInstallMetadata.GetDownloadsDirectory(installPath);
+            return prePatch.DownloadParts.All(x => File.Exists(Path.Combine(downloadDirectory, x.GetFileName()))
+                && new FileInfo(Path.Combine(downloadDirectory, x.GetFileName())).Length == x.PackageSize);
         }
         string? predownloadVersion = null;
         GameConfig? gameConfig = await _hoYoPlayService.GetGameConfigAsync(gameId);

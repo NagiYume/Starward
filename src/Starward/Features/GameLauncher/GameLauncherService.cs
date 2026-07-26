@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Starward.Core;
 using Starward.Core.HoYoPlay;
+using Starward.Core.Hypergryph;
 using Starward.Features.GameSetting;
 using Starward.Features.HoYoPlay;
 using Starward.Features.PlayTime;
@@ -10,6 +11,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
@@ -28,13 +30,16 @@ internal partial class GameLauncherService
 
     private readonly GameAuthLoginService _gameAuthLoginService;
 
+    private readonly HypergryphLauncherClient _hypergryphLauncherClient;
 
-    public GameLauncherService(ILogger<GameLauncherService> logger, HoYoPlayService hoYoPlayService, PlayTimeService playTimeService, GameAuthLoginService gameAuthLoginService)
+
+    public GameLauncherService(ILogger<GameLauncherService> logger, HoYoPlayService hoYoPlayService, PlayTimeService playTimeService, GameAuthLoginService gameAuthLoginService, HypergryphLauncherClient hypergryphLauncherClient)
     {
         _logger = logger;
         _hoYoPlayService = hoYoPlayService;
         _playTimeService = playTimeService;
         _gameAuthLoginService = gameAuthLoginService;
+        _hypergryphLauncherClient = hypergryphLauncherClient;
     }
 
 
@@ -141,6 +146,41 @@ internal partial class GameLauncherService
         {
             return null;
         }
+        if (HypergryphGameConstants.IsEndfield(gameBiz))
+        {
+            HypergryphInstallMetadata? metadata = await HypergryphInstallMetadata.ReadAsync(installPath);
+            if (Version.TryParse(metadata?.Version, out Version? metadataVersion))
+            {
+                return metadataVersion;
+            }
+
+            string exePath = Path.Combine(installPath, HypergryphGameConstants.EndfieldExeName);
+            if (!File.Exists(exePath))
+            {
+                return null;
+            }
+
+            string gameFilesPath = Path.Combine(installPath, "game_files");
+            if (File.Exists(gameFilesPath))
+            {
+                HypergryphLatestGame latest = await _hypergryphLauncherClient.GetLatestEndfieldAsync(null);
+                await using FileStream stream = File.OpenRead(gameFilesPath);
+                string md5 = Convert.ToHexStringLower(await MD5.HashDataAsync(stream));
+                if (string.Equals(md5, latest.Package.GameFilesMD5, StringComparison.OrdinalIgnoreCase)
+                    && Version.TryParse(latest.Version, out Version? latestVersion))
+                {
+                    await new HypergryphInstallMetadata
+                    {
+                        Version = latest.Version,
+                        GameFilesMD5 = latest.Package.GameFilesMD5,
+                    }.WriteAsync(installPath);
+                    return latestVersion;
+                }
+            }
+
+            // The game is importable, but its encrypted launcher metadata does not expose a version.
+            return new Version(0, 0, 0);
+        }
         var config = Path.Join(installPath, "config.ini");
         if (File.Exists(config))
         {
@@ -173,6 +213,24 @@ internal partial class GameLauncherService
     /// <returns></returns>
     public async Task<(Version? Latest, Version? Predownload)> GetLatestGameVersionAsync(GameId gameId)
     {
+        if (HypergryphGameConstants.IsEndfield(gameId.GameBiz))
+        {
+            Version? localVersion = await GetLocalGameVersionAsync(gameId);
+            HypergryphLatestGame latest = await _hypergryphLauncherClient.GetLatestEndfieldAsync(localVersion?.ToString());
+            _ = Version.TryParse(latest.Version, out Version? latestVersion);
+            Version? predownloadVersion = null;
+            if (latest.PrePatch is not null && latest.PrePatch.DownloadParts.Count > 0 && latestVersion is not null)
+            {
+                string targetVersion = string.IsNullOrWhiteSpace(latest.PrePatch.TargetVersion)
+                    ? latest.PrePatch.Version
+                    : latest.PrePatch.TargetVersion;
+                if (!Version.TryParse(targetVersion, out predownloadVersion) || predownloadVersion <= latestVersion)
+                {
+                    predownloadVersion = new Version(latestVersion.Major, latestVersion.Minor, Math.Max(0, latestVersion.Build), Math.Max(0, latestVersion.Revision) + 1);
+                }
+            }
+            return (latestVersion, predownloadVersion);
+        }
         GameConfig? config = await _hoYoPlayService.GetGameConfigAsync(gameId);
         if (config is null)
         {
@@ -230,6 +288,7 @@ internal partial class GameLauncherService
         {
             GameBiz.hk4e_cn or GameBiz.hk4e_bilibili => "YuanShen.exe",
             GameBiz.hk4e_global => "GenshinImpact.exe",
+            GameBiz.endfield_cn => HypergryphGameConstants.EndfieldExeName,
             _ => gameBiz.Game switch
             {
                 GameBiz.hkrpg => "StarRail.exe",
@@ -359,7 +418,7 @@ internal partial class GameLauncherService
                 }
             }
             arg = AppConfig.GetStartArgument(gameId.GameBiz)?.Trim();
-            if (AppConfig.EnableLoginAuthTicket is true)
+            if (!HypergryphGameConstants.IsEndfield(gameId.GameBiz) && AppConfig.EnableLoginAuthTicket is true)
             {
                 string? ticket = await _gameAuthLoginService.CreateAuthTicketByGameBiz(gameId);
                 if (!string.IsNullOrWhiteSpace(ticket))

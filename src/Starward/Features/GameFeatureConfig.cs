@@ -1,6 +1,7 @@
 using Starward.Core;
 using Starward.Core.HoYoPlay;
 using Starward.Features.Gacha;
+using Starward.Features.Gacha.Endfield;
 using Starward.Features.GameLauncher;
 using Starward.Features.GameRecord;
 using Starward.Features.GameSetting;
@@ -76,6 +77,7 @@ internal partial class GameFeatureConfig
             GameBiz.nap_cn => nap_cn,
             GameBiz.nap_global => nap_global,
             GameBiz.nap_bilibili => nap_bilibili,
+            GameBiz.endfield_cn => endfield_cn,
             _ => Default,
         };
         return config;
@@ -91,6 +93,18 @@ internal partial class GameFeatureConfig
     private static readonly GameFeatureConfig Default = new()
     {
         SupportedPages = [nameof(GameLauncherPage)]
+    };
+
+
+    private static readonly GameFeatureConfig endfield_cn = new()
+    {
+        SupportedPages =
+        [
+            nameof(GameLauncherPage),
+            nameof(GameSettingPage),
+            nameof(ScreenshotPage),
+            nameof(EndfieldGachaPage),
+        ],
     };
 
 

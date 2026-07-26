@@ -256,7 +256,9 @@ internal static class DatabaseService
         Sql_v16,
         Sql_v17,
         Sql_v18,
-        Sql_v19
+        Sql_v19,
+        Sql_v20,
+        Sql_v21
     ];
 
 
@@ -1021,6 +1023,59 @@ internal static class DatabaseService
         ALTER TABLE StarRailForgottenHallInfo ADD COLUMN ExtraStarNum INTEGER DEFAULT 0 NOT NULL;
 
         PRAGMA USER_VERSION = 19;
+        COMMIT TRANSACTION;
+        """;
+
+    private const string Sql_v20 = """
+        BEGIN TRANSACTION;
+
+        CREATE TABLE IF NOT EXISTS EndfieldGachaAccount
+        (
+            AccountKey   TEXT PRIMARY KEY,
+            Uid          TEXT NOT NULL,
+            RoleId       TEXT NOT NULL,
+            RoleName     TEXT,
+            ServerId     TEXT NOT NULL,
+            ServerName   TEXT,
+            LastSyncTime TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS EndfieldGachaItem
+        (
+            AccountKey  TEXT    NOT NULL,
+            RecordType  TEXT    NOT NULL,
+            SeqId       TEXT    NOT NULL,
+            ItemId      TEXT,
+            ItemName    TEXT    NOT NULL,
+            ItemType    TEXT,
+            Rarity      INTEGER NOT NULL,
+            IsNew       INTEGER NOT NULL,
+            IsFree      INTEGER NOT NULL,
+            PoolId      TEXT,
+            PoolName    TEXT,
+            PoolType    TEXT,
+            GachaTime   TEXT    NOT NULL,
+            PRIMARY KEY (AccountKey, RecordType, SeqId)
+        );
+        CREATE INDEX IF NOT EXISTS IX_EndfieldGachaItem_AccountType ON EndfieldGachaItem (AccountKey, RecordType);
+        CREATE INDEX IF NOT EXISTS IX_EndfieldGachaItem_Pool ON EndfieldGachaItem (PoolType, PoolId);
+        CREATE INDEX IF NOT EXISTS IX_EndfieldGachaItem_Rarity ON EndfieldGachaItem (Rarity);
+
+        PRAGMA USER_VERSION = 20;
+        COMMIT TRANSACTION;
+        """;
+
+    private const string Sql_v21 = """
+        BEGIN TRANSACTION;
+
+        CREATE TABLE IF NOT EXISTS EndfieldGachaAuth
+        (
+            AccountKey TEXT PRIMARY KEY,
+            LoginToken BLOB NOT NULL,
+            UpdateTime TEXT NOT NULL
+        );
+
+        PRAGMA USER_VERSION = 21;
         COMMIT TRANSACTION;
         """;
 

@@ -15,11 +15,13 @@ public class GamePostGroup
 
     public static List<GamePostGroup> FromGameContent(GameContent content)
     {
-        return content.Posts.GroupBy(x => x.Type)
-                      .OrderBy(x => x.Key)
+        bool isEndfield = content.GameId.GameBiz.Value is Starward.Core.GameBiz.endfield_cn;
+        var groups = content.Posts.GroupBy(x => x.Type);
+        var orderedGroups = isEndfield ? groups : groups.OrderBy(x => x.Key);
+        return orderedGroups
                       .Select(x => new GamePostGroup
                       {
-                          Header = LocalizePostType(x.Key),
+                          Header = isEndfield ? x.Key : LocalizePostType(x.Key),
                           List = x.ToList(),
                       }).ToList();
     }
