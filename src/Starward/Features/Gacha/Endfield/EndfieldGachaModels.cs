@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 
 namespace Starward.Features.Gacha.Endfield;
@@ -39,6 +40,8 @@ public sealed class EndfieldGachaItem
 
     public string ItemType { get; set; } = "";
 
+    public string Icon { get; set; } = "";
+
     public int Rarity { get; set; }
 
     public bool IsNew { get; set; }
@@ -55,13 +58,19 @@ public sealed class EndfieldGachaItem
 
     public int Pity { get; set; }
 
-    public string PityText => Pity > 0 ? Pity.ToString(CultureInfo.CurrentCulture) : "-";
+    public bool IsPityPlaceholder { get; set; }
+
+    public string PityText => IsFree ? "加急" : IsPityPlaceholder || Pity > 0
+        ? Pity.ToString(CultureInfo.CurrentCulture)
+        : "-";
 
     public string TimeText => FormatTimestamp(GachaTime);
 
     public string RarityText => $"{Rarity} 星";
 
     public string ExtraText => IsFree ? "加急招募" : IsNew ? "NEW" : "";
+
+    public bool HasIcon => !string.IsNullOrWhiteSpace(Icon);
 
     private static string FormatTimestamp(string value)
     {
@@ -78,6 +87,42 @@ public sealed class EndfieldGachaItem
         }
         return value;
     }
+}
+
+
+public sealed class EndfieldGachaPoolStats
+{
+    public string Key { get; set; } = "";
+
+    public string Name { get; set; } = "";
+
+    public int Count { get; set; }
+
+    public string StartTimeText { get; set; } = "";
+
+    public string EndTimeText { get; set; } = "";
+
+    public int Count6 { get; set; }
+
+    public int Count5 { get; set; }
+
+    public int Count4 { get; set; }
+
+    public int Pity6 { get; set; }
+
+    public int Pity5 { get; set; }
+
+    public double Average6 { get; set; }
+
+    public double Ratio6 => Count == 0 ? 0 : (double)Count6 / Count;
+
+    public double Ratio5 => Count == 0 ? 0 : (double)Count5 / Count;
+
+    public double Ratio4 => Count == 0 ? 0 : (double)Count4 / Count;
+
+    public List<EndfieldGachaItem> List6 { get; set; } = [];
+
+    public List<EndfieldGachaItem> List5 { get; set; } = [];
 }
 
 

@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
+using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Starward.Frameworks;
 using System;
@@ -26,6 +27,7 @@ public sealed partial class EndfieldGachaPage : PageBase
     private readonly EndfieldGachaService _service = AppConfig.GetService<EndfieldGachaService>();
     private List<EndfieldGachaItem> _allItems = [];
     private CancellationTokenSource? _syncCancellationTokenSource;
+    private CancellationTokenSource? _gachaInfoCancellationTokenSource;
 
     public EndfieldGachaPage()
     {
@@ -34,9 +36,7 @@ public sealed partial class EndfieldGachaPage : PageBase
 
     public ObservableCollection<EndfieldGachaAccount> Accounts { get; } = [];
 
-    public ObservableCollection<EndfieldGachaPoolOption> PoolOptions { get; } = [];
-
-    public ObservableCollection<EndfieldGachaItem> DisplayItems { get; } = [];
+    public ObservableCollection<EndfieldGachaPoolStats> GachaStats { get; } = [];
 
     public EndfieldGachaAccount? SelectedAccount
     {
@@ -46,18 +46,6 @@ public sealed partial class EndfieldGachaPage : PageBase
             if (SetProperty(ref field, value))
             {
                 LoadSelectedAccount();
-            }
-        }
-    }
-
-    public EndfieldGachaPoolOption? SelectedPool
-    {
-        get;
-        set
-        {
-            if (SetProperty(ref field, value))
-            {
-                UpdateDisplayItems();
             }
         }
     }
@@ -84,13 +72,18 @@ public sealed partial class EndfieldGachaPage : PageBase
 
     public InfoBarSeverity StatusSeverity { get; set => SetProperty(ref field, value); } = InfoBarSeverity.Informational;
 
-    public EndfieldGachaStats Stats { get; set => SetProperty(ref field, value); } = new();
-
     private string CurrentRecordType => SelectedRecordTypeIndex == 1 ? "weapon" : "char";
 
     protected override void OnLoaded()
     {
         LoadAccounts();
+        _gachaInfoCancellationTokenSource?.Cancel();
+        _gachaInfoCancellationTokenSource?.Dispose();
+        _gachaInfoCancellationTokenSource = new CancellationTokenSource();
+        if (Accounts.Count > 0)
+        {
+            _ = UpdateGachaInfoAsync(_gachaInfoCancellationTokenSource.Token);
+        }
     }
 
     protected override void OnUnloaded()
@@ -98,6 +91,28 @@ public sealed partial class EndfieldGachaPage : PageBase
         _syncCancellationTokenSource?.Cancel();
         _syncCancellationTokenSource?.Dispose();
         _syncCancellationTokenSource = null;
+        _gachaInfoCancellationTokenSource?.Cancel();
+        _gachaInfoCancellationTokenSource?.Dispose();
+        _gachaInfoCancellationTokenSource = null;
+    }
+
+    private async Task UpdateGachaInfoAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            bool updated = await _service.UpdateGachaInfoAsync(cancellationToken);
+            if (updated && !cancellationToken.IsCancellationRequested)
+            {
+                LoadSelectedAccount();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("Failed to update Endfield gacha icons: {ErrorType}", ex.GetType().Name);
+        }
     }
 
     private void LoadAccounts(string? selectedAccountKey = null)
@@ -113,9 +128,7 @@ public sealed partial class EndfieldGachaPage : PageBase
         if (SelectedAccount is null)
         {
             _allItems.Clear();
-            PoolOptions.Clear();
-            DisplayItems.Clear();
-            Stats = new();
+            GachaStats.Clear();
             IsEmpty = true;
         }
     }
@@ -127,145 +140,176 @@ public sealed partial class EndfieldGachaPage : PageBase
             return;
         }
         _allItems = _service.GetItems(SelectedAccount.AccountKey, CurrentRecordType);
-        RefreshPoolOptions();
+        BuildGachaStats();
     }
 
-    private void RefreshPoolOptions()
+    private void BuildGachaStats()
     {
-        PoolOptions.Clear();
-        PoolOptions.Add(new EndfieldGachaPoolOption { Key = "", Name = "全部卡池" });
-        if (CurrentRecordType == "char")
+        GachaStats.Clear();
+        List<EndfieldGachaPoolStats> stats = CurrentRecordType == "char"
+            ? BuildCharacterStats()
+            : BuildWeaponStats();
+        foreach (EndfieldGachaPoolStats item in stats)
         {
-            foreach (string poolType in CharacterPoolNames.Keys.OrderBy(GetCharacterPoolOrder))
-            {
-                List<EndfieldGachaItem> typeItems = _allItems.Where(x => x.PoolType == poolType).ToList();
-                if (typeItems.Count == 0)
-                {
-                    continue;
-                }
-                if (poolType == "E_CharacterGachaPoolType_Joint")
-                {
-                    foreach (IGrouping<string, EndfieldGachaItem> pool in typeItems
-                        .GroupBy(x => x.PoolId)
-                        .OrderByDescending(x => x.Max(item => ParseTimestamp(item.GachaTime))))
-                    {
-                        PoolOptions.Add(new EndfieldGachaPoolOption
-                        {
-                            Key = $"pool:{pool.Key}",
-                            Name = pool.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x.PoolName))?.PoolName ?? CharacterPoolNames[poolType],
-                        });
-                    }
-                }
-                else
-                {
-                    PoolOptions.Add(new EndfieldGachaPoolOption
-                    {
-                        Key = $"type:{poolType}",
-                        Name = CharacterPoolNames[poolType],
-                    });
-                }
-            }
+            GachaStats.Add(item);
         }
-        else
-        {
-            IEnumerable<EndfieldGachaPoolOption> pools = _allItems
-                .Where(x => !string.IsNullOrWhiteSpace(x.PoolId))
-                .GroupBy(x => x.PoolId)
-                .OrderByDescending(x => x.Max(item => ParseTimestamp(item.GachaTime)))
-                .Select(x => new EndfieldGachaPoolOption
-                {
-                    Key = x.Key,
-                    Name = x.FirstOrDefault(item => !string.IsNullOrWhiteSpace(item.PoolName))?.PoolName ?? x.Key,
-                });
-            foreach (EndfieldGachaPoolOption pool in pools)
-            {
-                PoolOptions.Add(pool);
-            }
-        }
-        SelectedPool = PoolOptions.FirstOrDefault();
+        IsEmpty = stats.Count == 0;
+        DispatcherQueue.TryEnqueue(UpdateGachaStatsCardLayout);
     }
 
-    private void UpdateDisplayItems()
+    private List<EndfieldGachaPoolStats> BuildCharacterStats()
     {
-        IEnumerable<EndfieldGachaItem> query = _allItems;
-        if (!string.IsNullOrWhiteSpace(SelectedPool?.Key))
-        {
-            if (CurrentRecordType == "char" && SelectedPool.Key.StartsWith("type:", StringComparison.Ordinal))
-            {
-                string poolType = SelectedPool.Key[5..];
-                query = query.Where(x => x.PoolType == poolType);
-            }
-            else if (CurrentRecordType == "char" && SelectedPool.Key.StartsWith("pool:", StringComparison.Ordinal))
-            {
-                string poolId = SelectedPool.Key[5..];
-                query = query.Where(x => x.PoolId == poolId);
-            }
-            else
-            {
-                query = query.Where(x => x.PoolId == SelectedPool.Key);
-            }
-        }
-        List<EndfieldGachaItem> items = query
-            .OrderByDescending(x => ParseTimestamp(x.GachaTime))
-            .ThenByDescending(x => x.SeqId.Length)
-            .ThenByDescending(x => x.SeqId, StringComparer.Ordinal)
-            .ToList();
+        var result = new List<EndfieldGachaPoolStats>();
 
-        int pity;
-        if (string.IsNullOrWhiteSpace(SelectedPool?.Key))
+        List<EndfieldGachaItem> specialItems = SortAscending(_allItems
+            .Where(x => x.PoolType == "E_CharacterGachaPoolType_Special"));
+        if (specialItems.Count > 0)
         {
-            IEnumerable<IGrouping<string, EndfieldGachaItem>> groups = CurrentRecordType == "char"
-                ? items.GroupBy(x => x.PoolType == "E_CharacterGachaPoolType_Joint" ? $"joint:{x.PoolId}" : x.PoolType)
-                : items.GroupBy(x => x.PoolId);
-            foreach (IGrouping<string, EndfieldGachaItem> group in groups)
+            var batches = new List<List<EndfieldGachaItem>>();
+            foreach (EndfieldGachaItem item in specialItems)
             {
-                CalculatePity(group.ToList());
+                if (batches.Count == 0 || batches[^1][0].PoolId != item.PoolId)
+                {
+                    batches.Add([]);
+                }
+                batches[^1].Add(item);
             }
-            pity = -1;
-        }
-        else
-        {
-            pity = CalculatePity(items);
+            int pity6 = 0;
+            int pity5 = 0;
+            var cards = new List<EndfieldGachaPoolStats>();
+            foreach (List<EndfieldGachaItem> batch in batches)
+            {
+                string name = GetPoolName(batch, CharacterPoolNames["E_CharacterGachaPoolType_Special"]);
+                cards.Add(CreatePoolStats($"special:{batch[0].PoolId}", name, batch, ref pity6, ref pity5, true));
+            }
+            cards.Reverse();
+            result.AddRange(cards);
         }
 
-        DisplayItems.Clear();
-        foreach (EndfieldGachaItem item in items)
+        IEnumerable<IGrouping<string, EndfieldGachaItem>> jointPools = _allItems
+            .Where(x => x.PoolType == "E_CharacterGachaPoolType_Joint")
+            .GroupBy(x => x.PoolId)
+            .OrderByDescending(x => x.Max(item => ParseTimestamp(item.GachaTime)));
+        foreach (IGrouping<string, EndfieldGachaItem> pool in jointPools)
         {
-            DisplayItems.Add(item);
+            int pity6 = 0;
+            int pity5 = 0;
+            List<EndfieldGachaItem> items = pool.ToList();
+            result.Add(CreatePoolStats($"joint:{pool.Key}",
+                GetPoolName(items, CharacterPoolNames["E_CharacterGachaPoolType_Joint"]),
+                items, ref pity6, ref pity5, true));
         }
-        Stats = new EndfieldGachaStats
-        {
-            Total = items.Count,
-            Count6 = items.Count(x => x.Rarity == 6),
-            Count5 = items.Count(x => x.Rarity == 5),
-            Count4 = items.Count(x => x.Rarity == 4),
-            PityText = pity < 0 ? "-" : pity.ToString(CultureInfo.CurrentCulture),
-        };
-        IsEmpty = items.Count == 0;
-    }
 
-    private static int CalculatePity(List<EndfieldGachaItem> items)
-    {
-        int pity = 0;
-        foreach (EndfieldGachaItem item in items
-            .OrderBy(x => ParseTimestamp(x.GachaTime))
-            .ThenBy(x => x.SeqId.Length)
-            .ThenBy(x => x.SeqId, StringComparer.Ordinal))
+        foreach (string poolType in CharacterPoolNames.Keys
+            .Where(x => x is not "E_CharacterGachaPoolType_Special" and not "E_CharacterGachaPoolType_Joint")
+            .OrderBy(GetCharacterPoolOrder))
         {
-            bool excludesFreePull = item.RecordType == "char" &&
-                item.PoolType is "E_CharacterGachaPoolType_Special" or "E_CharacterGachaPoolType_Joint" && item.IsFree;
-            if (excludesFreePull)
+            List<EndfieldGachaItem> items = _allItems.Where(x => x.PoolType == poolType).ToList();
+            if (items.Count == 0)
             {
-                item.Pity = 0;
                 continue;
             }
-            item.Pity = ++pity;
+            int pity6 = 0;
+            int pity5 = 0;
+            result.Add(CreatePoolStats($"type:{poolType}", CharacterPoolNames[poolType], items,
+                ref pity6, ref pity5, false));
+        }
+        return result;
+    }
+
+    private List<EndfieldGachaPoolStats> BuildWeaponStats()
+    {
+        var result = new List<EndfieldGachaPoolStats>();
+        IEnumerable<IGrouping<string, EndfieldGachaItem>> pools = _allItems
+            .GroupBy(x => string.IsNullOrWhiteSpace(x.PoolId) ? x.PoolName : x.PoolId)
+            .OrderByDescending(x => x.Max(item => ParseTimestamp(item.GachaTime)));
+        foreach (IGrouping<string, EndfieldGachaItem> pool in pools)
+        {
+            int pity6 = 0;
+            int pity5 = 0;
+            List<EndfieldGachaItem> items = pool.ToList();
+            result.Add(CreatePoolStats($"weapon:{pool.Key}", GetPoolName(items, pool.Key), items,
+                ref pity6, ref pity5, false));
+        }
+        return result;
+    }
+
+    private static EndfieldGachaPoolStats CreatePoolStats(string key, string name,
+        IEnumerable<EndfieldGachaItem> source, ref int pity6, ref int pity5, bool excludeFreePulls)
+    {
+        List<EndfieldGachaItem> items = SortAscending(source);
+        foreach (EndfieldGachaItem item in items)
+        {
+            bool countsForPity = !excludeFreePulls || !item.IsFree;
+            if (countsForPity)
+            {
+                pity6++;
+                pity5++;
+            }
             if (item.Rarity == 6)
             {
-                pity = 0;
+                item.Pity = countsForPity ? pity6 : 0;
+                if (countsForPity)
+                {
+                    pity6 = 0;
+                }
+            }
+            else if (item.Rarity == 5)
+            {
+                item.Pity = countsForPity ? pity5 : 0;
+                if (countsForPity)
+                {
+                    pity5 = 0;
+                }
             }
         }
-        return pity;
+
+        List<EndfieldGachaItem> list6 = items.Where(x => x.Rarity == 6).Reverse().ToList();
+        List<EndfieldGachaItem> list5 = items.Where(x => x.Rarity == 5).Reverse().ToList();
+        var stats = new EndfieldGachaPoolStats
+        {
+            Key = key,
+            Name = name,
+            Count = items.Count,
+            StartTimeText = items[0].TimeText,
+            EndTimeText = items[^1].TimeText,
+            Count6 = list6.Count,
+            Count5 = list5.Count,
+            Count4 = items.Count(x => x.Rarity == 4),
+            Pity6 = pity6,
+            Pity5 = pity5,
+            Average6 = list6.Where(x => !x.IsFree).Select(x => x.Pity).DefaultIfEmpty().Average(),
+            List6 = list6,
+            List5 = list5,
+        };
+        stats.List6.Insert(0, CreatePityItem(6, pity6, items[^1].GachaTime));
+        stats.List5.Insert(0, CreatePityItem(5, pity5, items[^1].GachaTime));
+        return stats;
+    }
+
+    private static EndfieldGachaItem CreatePityItem(int rarity, int pity, string time)
+    {
+        return new EndfieldGachaItem
+        {
+            ItemName = "保底",
+            Rarity = rarity,
+            Pity = pity,
+            GachaTime = time,
+            IsPityPlaceholder = true,
+        };
+    }
+
+    private static List<EndfieldGachaItem> SortAscending(IEnumerable<EndfieldGachaItem> items)
+    {
+        return items.OrderBy(x => ParseTimestamp(x.GachaTime))
+            .ThenBy(x => x.SeqId.Length)
+            .ThenBy(x => x.SeqId, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    private static string GetPoolName(List<EndfieldGachaItem> items, string fallback)
+    {
+        return items.LastOrDefault(x => !string.IsNullOrWhiteSpace(x.PoolName))?.PoolName ?? fallback;
     }
 
     private static long ParseTimestamp(string value)
@@ -281,6 +325,45 @@ public sealed partial class EndfieldGachaPage : PageBase
         "E_CharacterGachaPoolType_Beginner" => 3,
         _ => 4,
     };
+
+    private void UpdateGachaStatsCardLayout()
+    {
+        try
+        {
+            int count = ItemsControl_GachaStats.Items.Count;
+            if (count == 0)
+            {
+                return;
+            }
+            double width = (ScrollViewer_GachaStats.ActualWidth - 40 - (count - 1) * 12) / count;
+            width = Math.Clamp(width, 262, double.MaxValue);
+            for (int i = 0; i < count; i++)
+            {
+                if (ItemsControl_GachaStats.ContainerFromIndex(i) is ContentPresenter presenter)
+                {
+                    presenter.Width = width;
+                }
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private void GachaStatsCard_Loaded(object sender, RoutedEventArgs e)
+    {
+        UpdateGachaStatsCardLayout();
+    }
+
+    private void GachaStatsCard_Unloaded(object sender, RoutedEventArgs e)
+    {
+        UpdateGachaStatsCardLayout();
+    }
+
+    private void ScrollViewer_GachaStats_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        UpdateGachaStatsCardLayout();
+    }
 
     [RelayCommand]
     private async Task SyncGachaAsync()

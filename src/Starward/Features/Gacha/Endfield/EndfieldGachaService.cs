@@ -52,9 +52,21 @@ internal sealed partial class EndfieldGachaService
     public List<EndfieldGachaItem> GetItems(string accountKey, string recordType)
     {
         using var connection = DatabaseService.CreateConnection();
-        return connection.Query<EndfieldGachaItem>(
-            "SELECT * FROM EndfieldGachaItem WHERE AccountKey = @accountKey AND RecordType = @recordType;",
-            new { accountKey, recordType }).ToList();
+        List<EndfieldGachaItem> items = connection.Query<EndfieldGachaItem>(
+            """
+            SELECT item.*, info.Icon
+            FROM EndfieldGachaItem item
+            LEFT JOIN EndfieldGachaInfo info ON item.RecordType = info.RecordType AND item.ItemId = info.ItemId
+            WHERE item.AccountKey = @accountKey AND item.RecordType = @recordType;
+            """, new { accountKey, recordType }).ToList();
+        foreach (EndfieldGachaItem item in items)
+        {
+            if (string.IsNullOrWhiteSpace(item.Icon))
+            {
+                item.Icon = GetFallbackIconUrl(item.RecordType, item.ItemId);
+            }
+        }
+        return items;
     }
 
     public bool HasSavedLoginToken(string accountKey)
@@ -169,6 +181,20 @@ internal sealed partial class EndfieldGachaService
         {
             failedPools.Add("武器池列表");
             _logger.LogWarning("Failed to sync Endfield weapon pool list: {ErrorType}", ex.GetType().Name);
+        }
+
+        try
+        {
+            progress?.Report("正在更新角色与武器图标");
+            await UpdateGachaInfoAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("Failed to update Endfield gacha icons: {ErrorType}", ex.GetType().Name);
         }
 
         account.LastSyncTime = DateTimeOffset.Now;
