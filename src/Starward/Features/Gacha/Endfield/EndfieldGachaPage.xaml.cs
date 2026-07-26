@@ -26,17 +26,26 @@ public sealed partial class EndfieldGachaPage : PageBase
     private readonly ILogger<EndfieldGachaPage> _logger = AppConfig.GetLogger<EndfieldGachaPage>();
     private readonly EndfieldGachaService _service = AppConfig.GetService<EndfieldGachaService>();
     private List<EndfieldGachaItem> _allItems = [];
+    private List<EndfieldAccountRecordItem> _allAccountRecords = [];
+    private string _accountRecordsAccountKey = "";
     private CancellationTokenSource? _syncCancellationTokenSource;
     private CancellationTokenSource? _gachaInfoCancellationTokenSource;
 
     public EndfieldGachaPage()
     {
         InitializeComponent();
+        InitializeAccountRecordFilters();
     }
 
     public ObservableCollection<EndfieldGachaAccount> Accounts { get; } = [];
 
     public ObservableCollection<EndfieldGachaPoolStats> GachaStats { get; } = [];
+
+    public ObservableCollection<EndfieldAccountRecordItem> AccountRecords { get; } = [];
+
+    public ObservableCollection<EndfieldAccountRecordSummary> AccountRecordSummaries { get; } = [];
+
+    public ObservableCollection<EndfieldAccountRecordFilterOption> AccountRecordFilters { get; } = [];
 
     public EndfieldGachaAccount? SelectedAccount
     {
@@ -46,6 +55,30 @@ public sealed partial class EndfieldGachaPage : PageBase
             if (SetProperty(ref field, value))
             {
                 LoadSelectedAccount();
+                if (value is not null)
+                {
+                    LoadLocalAccountRecords(value);
+                }
+            }
+        }
+    }
+
+    public int SelectedViewIndex
+    {
+        get;
+        set
+        {
+            if (SetProperty(ref field, value))
+            {
+                OnPropertyChanged(nameof(IsGachaView));
+                OnPropertyChanged(nameof(IsAccountRecordView));
+                if (IsAccountRecordView && SelectedAccount is not null)
+                {
+                    if (SelectedAccount.AccountKey != _accountRecordsAccountKey)
+                    {
+                        LoadLocalAccountRecords(SelectedAccount);
+                    }
+                }
             }
         }
     }
@@ -62,15 +95,40 @@ public sealed partial class EndfieldGachaPage : PageBase
         }
     }
 
+    public int SelectedAccountRecordCategoryIndex
+    {
+        get;
+        set
+        {
+            if (SetProperty(ref field, value))
+            {
+                AccountRecordListTitle = value >= 0 && value < AccountRecordFilters.Count
+                    ? AccountRecordFilters[value].Name
+                    : "账号记录";
+                FilterAccountRecords();
+            }
+        }
+    }
+
     public bool IsSyncing { get; set => SetProperty(ref field, value); }
 
     public bool IsEmpty { get; set => SetProperty(ref field, value); } = true;
+
+    public bool IsAccountRecordEmpty { get; set => SetProperty(ref field, value); } = true;
 
     public bool IsStatusOpen { get; set => SetProperty(ref field, value); }
 
     public string StatusText { get; set => SetProperty(ref field, value); } = "";
 
     public InfoBarSeverity StatusSeverity { get; set => SetProperty(ref field, value); } = InfoBarSeverity.Informational;
+
+    public string AccountRecordUpdatedText { get; set => SetProperty(ref field, value); } = "尚未同步";
+
+    public string AccountRecordListTitle { get; set => SetProperty(ref field, value); } = "理智";
+
+    public bool IsGachaView => SelectedViewIndex == 0;
+
+    public bool IsAccountRecordView => SelectedViewIndex == 1;
 
     private string CurrentRecordType => SelectedRecordTypeIndex == 1 ? "weapon" : "char";
 
@@ -130,6 +188,7 @@ public sealed partial class EndfieldGachaPage : PageBase
             _allItems.Clear();
             GachaStats.Clear();
             IsEmpty = true;
+            ClearAccountRecords();
         }
     }
 
@@ -141,6 +200,93 @@ public sealed partial class EndfieldGachaPage : PageBase
         }
         _allItems = _service.GetItems(SelectedAccount.AccountKey, CurrentRecordType);
         BuildGachaStats();
+    }
+
+    private void ClearAccountRecords()
+    {
+        _allAccountRecords.Clear();
+        _accountRecordsAccountKey = "";
+        AccountRecords.Clear();
+        AccountRecordSummaries.Clear();
+        AccountRecordUpdatedText = "尚未同步";
+        IsAccountRecordEmpty = true;
+        UpdateAccountRecordFilterCounts();
+    }
+
+    private void InitializeAccountRecordFilters()
+    {
+        AddFilter("stamina", "理智", "\uE946");
+        AddFilter("currency:1", "源石", "\uE8C7");
+        AddFilter("currency:2", "嵌晶玉", "\uE8C7");
+        AddFilter("currency:3", "武库配额", "\uE8C7");
+        AddFilter("battle_pass", "协议通行证", "\uE8D7");
+        AddFilter("monthly_card", "月卡", "\uE8C7");
+        AddFilter("mail", "邮件", "\uE715");
+        AddFilter("login", "登录", "\uE77B");
+        SelectedAccountRecordCategoryIndex = -1;
+        SelectedAccountRecordCategoryIndex = 0;
+
+        void AddFilter(string key, string name, string glyph)
+        {
+            AccountRecordFilters.Add(new EndfieldAccountRecordFilterOption
+            {
+                Key = key,
+                Name = name,
+                Glyph = glyph,
+                Icon = EndfieldGachaService.GetAccountRecordIcon(key),
+            });
+        }
+    }
+
+    private void LoadLocalAccountRecords(EndfieldGachaAccount account)
+    {
+        try
+        {
+            ApplyAccountRecords(account, _service.GetAccountRecords(account.AccountKey));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("Failed to load local Endfield account records: {ErrorType}", ex.GetType().Name);
+            ClearAccountRecords();
+        }
+    }
+
+    private void ApplyAccountRecords(EndfieldGachaAccount account, EndfieldAccountRecordSyncResult result)
+    {
+        _allAccountRecords = result.Items.ToList();
+        _accountRecordsAccountKey = account.AccountKey;
+        AccountRecordSummaries.Clear();
+        foreach (EndfieldAccountRecordSummary summary in result.Summaries)
+        {
+            AccountRecordSummaries.Add(summary);
+        }
+        AccountRecordUpdatedText = result.SyncTime == DateTimeOffset.MinValue
+            ? "尚未同步"
+            : $"更新于 {result.SyncTime.ToLocalTime():yyyy-MM-dd HH:mm:ss}";
+        UpdateAccountRecordFilterCounts();
+        FilterAccountRecords();
+    }
+
+    private void UpdateAccountRecordFilterCounts()
+    {
+        foreach (EndfieldAccountRecordFilterOption option in AccountRecordFilters)
+        {
+            option.Count = _allAccountRecords.Count(x => x.RecordType == option.Key);
+        }
+    }
+
+    private void FilterAccountRecords()
+    {
+        string recordType = SelectedAccountRecordCategoryIndex >= 0 &&
+            SelectedAccountRecordCategoryIndex < AccountRecordFilters.Count
+            ? AccountRecordFilters[SelectedAccountRecordCategoryIndex].Key
+            : "stamina";
+        AccountRecords.Clear();
+        foreach (EndfieldAccountRecordItem item in _allAccountRecords.Where(x => x.RecordType == recordType))
+        {
+            AccountRecords.Add(item);
+        }
+        IsAccountRecordEmpty = AccountRecords.Count == 0;
     }
 
     private void BuildGachaStats()
@@ -390,7 +536,7 @@ public sealed partial class EndfieldGachaPage : PageBase
         }
     }
 
-    private async Task LoginAccountInternalAsync()
+    private async Task LoginAccountInternalAsync(bool syncAccountRecords = false)
     {
         try
         {
@@ -398,7 +544,7 @@ public sealed partial class EndfieldGachaPage : PageBase
             await dialog.ShowAsync();
             if (!string.IsNullOrWhiteSpace(dialog.LoginToken))
             {
-                await AddAccountAndSyncAsync(dialog.LoginToken);
+                await AddAccountAndSyncAsync(dialog.LoginToken, syncAccountRecords);
             }
         }
         catch (Exception ex)
@@ -438,7 +584,7 @@ public sealed partial class EndfieldGachaPage : PageBase
         }
     }
 
-    private async Task AddAccountAndSyncAsync(string loginToken)
+    private async Task AddAccountAndSyncAsync(string loginToken, bool syncAccountRecords = false)
     {
         PrepareSync();
         try
@@ -448,10 +594,43 @@ public sealed partial class EndfieldGachaPage : PageBase
                 loginToken, progress, _syncCancellationTokenSource!.Token);
             EndfieldGachaAccount account = accounts[0];
             LoadAccounts(account.AccountKey);
+            EndfieldAccountRecordSyncResult? accountRecordResult = null;
+            string? accountRecordError = null;
+            if (syncAccountRecords)
+            {
+                try
+                {
+                    accountRecordResult = await _service.SyncAccountRecordsAsync(
+                        account, progress, _syncCancellationTokenSource.Token);
+                    ApplyAccountRecords(account, accountRecordResult);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    accountRecordError = ex.Message;
+                    _logger.LogWarning("Failed to sync Endfield account records after login: {ErrorType}",
+                        ex.GetType().Name);
+                }
+            }
             EndfieldGachaSyncResult result = await _service.SyncAccountAsync(
                 account, progress, _syncCancellationTokenSource.Token);
             LoadAccounts(result.Account.AccountKey);
-            ShowSyncResult(result);
+            if (!syncAccountRecords)
+            {
+                ShowSyncResult(result);
+            }
+            else if (accountRecordResult is not null)
+            {
+                ShowSyncResult(result, accountRecordResult);
+            }
+            else
+            {
+                StatusSeverity = InfoBarSeverity.Warning;
+                StatusText = $"寻访记录已同步，账号记录读取失败：{accountRecordError}";
+            }
         }
         catch (OperationCanceledException)
         {
@@ -463,6 +642,60 @@ public sealed partial class EndfieldGachaPage : PageBase
             _logger.LogWarning("Failed to add Endfield account: {ErrorType}", ex.GetType().Name);
             StatusSeverity = InfoBarSeverity.Error;
             StatusText = ex.Message;
+        }
+        finally
+        {
+            IsSyncing = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task SyncAccountRecordsAsync()
+    {
+        if (IsSyncing)
+        {
+            return;
+        }
+        if (SelectedAccount is null || !_service.HasSavedLoginToken(SelectedAccount.AccountKey))
+        {
+            await LoginAccountInternalAsync(syncAccountRecords: true);
+            return;
+        }
+        await ExecuteAccountRecordSyncAsync(SelectedAccount);
+    }
+
+    private async Task ExecuteAccountRecordSyncAsync(EndfieldGachaAccount account)
+    {
+        PrepareSync();
+        try
+        {
+            var progress = new Progress<string>(text => StatusText = text);
+            EndfieldAccountRecordSyncResult result = await _service.SyncAccountRecordsAsync(
+                account, progress, _syncCancellationTokenSource!.Token);
+            if (SelectedAccount?.AccountKey == account.AccountKey)
+            {
+                ApplyAccountRecords(account, result);
+            }
+            StatusSeverity = result.FailedCategories.Length == 0
+                ? InfoBarSeverity.Success
+                : InfoBarSeverity.Warning;
+            StatusText = result.FailedCategories.Length == 0
+                ? $"账号记录同步完成，共读取 {result.Items.Count} 条。"
+                : $"账号记录已部分更新，以下分类读取失败：{string.Join("、", result.FailedCategories)}。";
+            IsStatusOpen = true;
+        }
+        catch (OperationCanceledException)
+        {
+            StatusSeverity = InfoBarSeverity.Informational;
+            StatusText = "同步已取消。";
+            IsStatusOpen = true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("Failed to sync Endfield account records: {ErrorType}", ex.GetType().Name);
+            StatusSeverity = InfoBarSeverity.Error;
+            StatusText = ex.Message;
+            IsStatusOpen = true;
         }
         finally
         {
@@ -529,6 +762,22 @@ public sealed partial class EndfieldGachaPage : PageBase
             StatusSeverity = InfoBarSeverity.Warning;
             StatusText = $"同步完成，但以下卡池获取失败：{string.Join("、", result.FailedPools)}。请稍后重试。";
         }
+    }
+
+    private void ShowSyncResult(EndfieldGachaSyncResult result, EndfieldAccountRecordSyncResult accountRecordResult)
+    {
+        if (result.FailedPools.Length == 0 && accountRecordResult.FailedCategories.Length == 0)
+        {
+            StatusSeverity = InfoBarSeverity.Success;
+            StatusText = $"同步完成：寻访新增 {result.NewCount} 条，账号记录 {accountRecordResult.Items.Count} 条。";
+            return;
+        }
+
+        var failures = new List<string>();
+        failures.AddRange(result.FailedPools);
+        failures.AddRange(accountRecordResult.FailedCategories);
+        StatusSeverity = InfoBarSeverity.Warning;
+        StatusText = $"同步已部分完成，以下内容读取失败：{string.Join("、", failures.Distinct())}。";
     }
 
     [RelayCommand]
