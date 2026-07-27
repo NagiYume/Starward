@@ -7,10 +7,6 @@ namespace Starward.Core.Hypergryph;
 
 public sealed class HypergryphLauncherClient
 {
-    private const string BatchProxyUrl = "https://launcher.hypergryph.com/api/proxy/batch_proxy";
-
-    private const string WebBatchProxyUrl = "https://launcher.hypergryph.com/api/proxy/web/batch_proxy";
-
     private readonly HttpClient _httpClient;
 
     public HypergryphLauncherClient(HttpClient httpClient)
@@ -18,8 +14,12 @@ public sealed class HypergryphLauncherClient
         _httpClient = httpClient;
     }
 
-    public async Task<HypergryphLatestGame> GetLatestEndfieldAsync(string? localVersion, CancellationToken cancellationToken = default)
+    public async Task<HypergryphLatestGame> GetLatestGameAsync(
+        GameBiz gameBiz,
+        string? localVersion,
+        CancellationToken cancellationToken = default)
     {
+        HypergryphGameProfile profile = HypergryphGameConstants.GetGameProfile(gameBiz);
         var request = new HypergryphBatchProxyRequest
         {
             Sequence = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(),
@@ -29,31 +29,35 @@ public sealed class HypergryphLauncherClient
                 {
                     LatestGameRequest = new HypergryphLatestGameRequest
                     {
-                        AppCode = HypergryphGameConstants.EndfieldAppCode,
-                        Channel = HypergryphGameConstants.Channel,
-                        LauncherAppCode = HypergryphGameConstants.LauncherAppCode,
-                        SubChannel = HypergryphGameConstants.SubChannel,
+                        AppCode = profile.GameAppCode,
+                        Channel = profile.Channel,
+                        LauncherAppCode = profile.LauncherAppCode,
+                        SubChannel = profile.SubChannel,
                         Version = localVersion ?? "",
                     },
                 },
             ],
         };
 
-        using HttpResponseMessage response = await _httpClient.PostAsJsonAsync(BatchProxyUrl, request, cancellationToken);
+        using HttpResponseMessage response = await _httpClient.PostAsJsonAsync(profile.BatchProxyUrl, request, cancellationToken);
         response.EnsureSuccessStatusCode();
         HypergryphBatchProxyResponse? result = await response.Content.ReadFromJsonAsync<HypergryphBatchProxyResponse>(cancellationToken);
         return result?.ProxyResponses.FirstOrDefault(x => x.Kind is "get_latest_game")?.LatestGame
-            ?? throw new InvalidDataException("The Hypergryph launcher returned no Endfield package information.");
+            ?? throw new InvalidDataException($"The Hypergryph launcher returned no package information for {profile.GameAppCode}.");
     }
 
-    public async Task<HypergryphLauncherContent> GetEndfieldContentAsync(string? language, CancellationToken cancellationToken = default)
+    public async Task<HypergryphLauncherContent> GetGameContentAsync(
+        GameBiz gameBiz,
+        string? language,
+        CancellationToken cancellationToken = default)
     {
+        HypergryphGameProfile profile = HypergryphGameConstants.GetGameProfile(gameBiz);
         var contentRequest = new HypergryphWebContentRequest
         {
-            AppCode = HypergryphGameConstants.EndfieldAppCode,
+            AppCode = profile.GameAppCode,
             Language = LanguageUtil.FilterLanguage(language),
-            Channel = HypergryphGameConstants.Channel,
-            SubChannel = HypergryphGameConstants.SubChannel,
+            Channel = profile.Channel,
+            SubChannel = profile.SubChannel,
         };
         var request = new HypergryphWebBatchProxyRequest
         {
@@ -72,10 +76,10 @@ public sealed class HypergryphLauncherClient
             ],
         };
 
-        using HttpResponseMessage response = await _httpClient.PostAsJsonAsync(WebBatchProxyUrl, request, cancellationToken);
+        using HttpResponseMessage response = await _httpClient.PostAsJsonAsync(profile.WebBatchProxyUrl, request, cancellationToken);
         response.EnsureSuccessStatusCode();
         HypergryphWebBatchProxyResponse result = await response.Content.ReadFromJsonAsync<HypergryphWebBatchProxyResponse>(cancellationToken)
-            ?? throw new InvalidDataException("The Hypergryph launcher returned no Endfield content information.");
+            ?? throw new InvalidDataException($"The Hypergryph launcher returned no content information for {profile.GameAppCode}.");
 
         return new HypergryphLauncherContent
         {

@@ -73,17 +73,20 @@ internal partial class GamePackageService
         {
             return false;
         }
-        if (HypergryphGameConstants.IsEndfield(gameId.GameBiz))
+        if (HypergryphGameConstants.IsHypergryphGame(gameId.GameBiz))
         {
             Version? localVersion = await _gameLauncherService.GetLocalGameVersionAsync(gameId, installPath);
-            HypergryphLatestGame latest = await _hypergryphLauncherClient.GetLatestEndfieldAsync(localVersion?.ToString());
+            HypergryphLatestGame latest = await _hypergryphLauncherClient.GetLatestGameAsync(
+                gameId.GameBiz,
+                localVersion?.ToString());
             HypergryphGamePatch? prePatch = latest.PrePatch;
             if (prePatch is null || prePatch.DownloadParts.Count == 0)
             {
                 return false;
             }
             HypergryphInstallMetadata? metadata = await HypergryphInstallMetadata.ReadAsync(installPath);
-            if (!string.Equals(metadata?.PredownloadFingerprint, prePatch.GetFingerprint(), StringComparison.OrdinalIgnoreCase))
+            if (metadata is null || !metadata.IsFor(gameId.GameBiz)
+                || !string.Equals(metadata.PredownloadFingerprint, prePatch.GetFingerprint(), StringComparison.OrdinalIgnoreCase))
             {
                 return false;
             }

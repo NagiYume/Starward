@@ -9,9 +9,10 @@ namespace Starward.Features.Hypergryph;
 
 internal static class HypergryphGameMetadata
 {
-    public static GameInfo CreateEndfieldGameInfo()
+    public static GameInfo CreateGameInfo(GameBiz gameBiz)
     {
-        GameId gameId = GameId.FromGameBiz(GameBiz.endfield_cn)!;
+        GameId gameId = GameId.FromGameBiz(gameBiz)!;
+        HypergryphGameProfile profile = HypergryphGameConstants.GetGameProfile(gameBiz);
         return new GameInfo
         {
             Id = gameId.Id,
@@ -24,41 +25,42 @@ internal static class HypergryphGameMetadata
                 Name = gameId.GameBiz.ToGameName(),
                 Title = gameId.GameBiz.ToGameName(),
                 Subtitle = "",
-                Icon = new GameImage { Url = HypergryphGameConstants.EndfieldIcon },
-                Logo = new GameImage { Url = HypergryphGameConstants.EndfieldIcon },
-                Thumbnail = new GameImage { Url = HypergryphGameConstants.EndfieldBackground },
-                Background = new GameImage { Url = HypergryphGameConstants.EndfieldBackground },
+                Icon = new GameImage { Url = profile.Icon },
+                Logo = new GameImage { Url = profile.Icon },
+                Thumbnail = new GameImage { Url = profile.Background },
+                Background = new GameImage { Url = profile.Background },
             },
         };
     }
 
-    public static GameConfig CreateEndfieldGameConfig()
+    public static GameConfig CreateGameConfig(GameBiz gameBiz)
     {
+        HypergryphGameProfile profile = HypergryphGameConstants.GetGameProfile(gameBiz);
         return new GameConfig
         {
-            GameId = GameId.FromGameBiz(GameBiz.endfield_cn)!,
-            ExeFileName = HypergryphGameConstants.EndfieldExeName,
-            InstallationDir = HypergryphGameConstants.EndfieldInstallationDirectory,
+            GameId = GameId.FromGameBiz(gameBiz)!,
+            ExeFileName = profile.ExeName,
+            InstallationDir = profile.InstallationDirectory,
             DefaultDownloadMode = DownloadMode.DOWNLOAD_MODE_FILE,
-            RelatedProcesses = ["Endfield.exe", "PlatformProcess.exe"],
+            RelatedProcesses = [.. profile.RelatedProcesses],
             RedundantFileCleanupPaths = [],
         };
     }
 
-    public static GameBackgroundInfo CreateEndfieldBackgroundInfo()
+    public static GameBackgroundInfo CreateBackgroundInfo(GameBiz gameBiz)
     {
         return new GameBackgroundInfo
         {
-            GameId = GameId.FromGameBiz(GameBiz.endfield_cn)!,
+            GameId = GameId.FromGameBiz(gameBiz)!,
             Backgrounds = [],
         };
     }
 
-    public static GameContent CreateEndfieldGameContent(HypergryphLauncherContent launcherContent)
+    public static GameContent CreateGameContent(GameBiz gameBiz, HypergryphLauncherContent launcherContent)
     {
         return new GameContent
         {
-            GameId = GameId.FromGameBiz(GameBiz.endfield_cn)!,
+            GameId = GameId.FromGameBiz(gameBiz)!,
             Language = CultureInfo.CurrentUICulture.Name,
             Banners = launcherContent.Banners
                 .Where(x => !string.IsNullOrWhiteSpace(x.Url))
@@ -103,12 +105,12 @@ internal static class HypergryphGameMetadata
         return "";
     }
 
-    public static GamePackage CreateEndfieldGamePackage(HypergryphLatestGame latest)
+    public static GamePackage CreateGamePackage(GameBiz gameBiz, HypergryphLatestGame latest)
     {
         HypergryphPackagePart firstPart = latest.Package.Packs.FirstOrDefault() ?? new();
         return new GamePackage
         {
-            GameId = GameId.FromGameBiz(GameBiz.endfield_cn)!,
+            GameId = GameId.FromGameBiz(gameBiz)!,
             Main = new GamePackageVersion
             {
                 Major = new GamePackageResource

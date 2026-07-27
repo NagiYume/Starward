@@ -220,7 +220,7 @@ internal class GameInstallService
                 HardLinkPath: {hardLinkPath}
                 """, context.Operation, context.GameId.Id, context.GameId.GameBiz, context.InstallPath, context.AudioLanguage, context.HardLinkPath);
             Directory.CreateDirectory(context.InstallPath);
-            if (HypergryphGameConstants.IsEndfield(context.GameId.GameBiz))
+            if (HypergryphGameConstants.IsHypergryphGame(context.GameId.GameBiz))
             {
                 HypergryphGameInstallService hypergryphService = _serviceProvider.GetRequiredService<HypergryphGameInstallService>();
                 await hypergryphService.ExecuteAsync(context, cancellationToken);

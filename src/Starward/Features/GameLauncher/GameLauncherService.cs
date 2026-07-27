@@ -146,15 +146,17 @@ internal partial class GameLauncherService
         {
             return null;
         }
-        if (HypergryphGameConstants.IsEndfield(gameBiz))
+        if (HypergryphGameConstants.IsHypergryphGame(gameBiz))
         {
+            HypergryphGameProfile profile = HypergryphGameConstants.GetGameProfile(gameBiz);
             HypergryphInstallMetadata? metadata = await HypergryphInstallMetadata.ReadAsync(installPath);
-            if (Version.TryParse(metadata?.Version, out Version? metadataVersion))
+            if (metadata?.IsFor(gameBiz) is true
+                && Version.TryParse(metadata.Version, out Version? metadataVersion))
             {
                 return metadataVersion;
             }
 
-            string exePath = Path.Combine(installPath, HypergryphGameConstants.EndfieldExeName);
+            string exePath = Path.Combine(installPath, profile.ExeName);
             if (!File.Exists(exePath))
             {
                 return null;
@@ -163,7 +165,7 @@ internal partial class GameLauncherService
             string gameFilesPath = Path.Combine(installPath, "game_files");
             if (File.Exists(gameFilesPath))
             {
-                HypergryphLatestGame latest = await _hypergryphLauncherClient.GetLatestEndfieldAsync(null);
+                HypergryphLatestGame latest = await _hypergryphLauncherClient.GetLatestGameAsync(gameBiz, null);
                 await using FileStream stream = File.OpenRead(gameFilesPath);
                 string md5 = Convert.ToHexStringLower(await MD5.HashDataAsync(stream));
                 if (string.Equals(md5, latest.Package.GameFilesMD5, StringComparison.OrdinalIgnoreCase)
@@ -171,6 +173,7 @@ internal partial class GameLauncherService
                 {
                     await new HypergryphInstallMetadata
                     {
+                        AppCode = profile.GameAppCode,
                         Version = latest.Version,
                         GameFilesMD5 = latest.Package.GameFilesMD5,
                     }.WriteAsync(installPath);
@@ -213,10 +216,12 @@ internal partial class GameLauncherService
     /// <returns></returns>
     public async Task<(Version? Latest, Version? Predownload)> GetLatestGameVersionAsync(GameId gameId)
     {
-        if (HypergryphGameConstants.IsEndfield(gameId.GameBiz))
+        if (HypergryphGameConstants.IsHypergryphGame(gameId.GameBiz))
         {
             Version? localVersion = await GetLocalGameVersionAsync(gameId);
-            HypergryphLatestGame latest = await _hypergryphLauncherClient.GetLatestEndfieldAsync(localVersion?.ToString());
+            HypergryphLatestGame latest = await _hypergryphLauncherClient.GetLatestGameAsync(
+                gameId.GameBiz,
+                localVersion?.ToString());
             _ = Version.TryParse(latest.Version, out Version? latestVersion);
             Version? predownloadVersion = null;
             if (latest.PrePatch is not null && latest.PrePatch.DownloadParts.Count > 0 && latestVersion is not null)
@@ -288,7 +293,8 @@ internal partial class GameLauncherService
         {
             GameBiz.hk4e_cn or GameBiz.hk4e_bilibili => "YuanShen.exe",
             GameBiz.hk4e_global => "GenshinImpact.exe",
-            GameBiz.endfield_cn => HypergryphGameConstants.EndfieldExeName,
+            GameBiz.arknights_cn => HypergryphGameConstants.ArknightsExeName,
+            GameBiz.endfield_cn or GameBiz.endfield_global => HypergryphGameConstants.EndfieldExeName,
             _ => gameBiz.Game switch
             {
                 GameBiz.hkrpg => "StarRail.exe",
@@ -418,7 +424,7 @@ internal partial class GameLauncherService
                 }
             }
             arg = AppConfig.GetStartArgument(gameId.GameBiz)?.Trim();
-            if (!HypergryphGameConstants.IsEndfield(gameId.GameBiz) && AppConfig.EnableLoginAuthTicket is true)
+            if (!HypergryphGameConstants.IsHypergryphGame(gameId.GameBiz) && AppConfig.EnableLoginAuthTicket is true)
             {
                 string? ticket = await _gameAuthLoginService.CreateAuthTicketByGameBiz(gameId);
                 if (!string.IsNullOrWhiteSpace(ticket))

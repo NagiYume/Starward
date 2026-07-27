@@ -77,7 +77,9 @@ internal partial class GameFeatureConfig
             GameBiz.nap_cn => nap_cn,
             GameBiz.nap_global => nap_global,
             GameBiz.nap_bilibili => nap_bilibili,
+            GameBiz.arknights_cn => arknights_cn,
             GameBiz.endfield_cn => endfield_cn,
+            GameBiz.endfield_global => endfield_global,
             _ => Default,
         };
         return config;
@@ -96,6 +98,12 @@ internal partial class GameFeatureConfig
     };
 
 
+    private static readonly GameFeatureConfig arknights_cn = new()
+    {
+        SupportedPages = [nameof(GameLauncherPage)],
+    };
+
+
     private static readonly GameFeatureConfig endfield_cn = new()
     {
         SupportedPages =
@@ -104,6 +112,17 @@ internal partial class GameFeatureConfig
             nameof(GameSettingPage),
             nameof(ScreenshotPage),
             nameof(EndfieldGachaPage),
+        ],
+    };
+
+
+    private static readonly GameFeatureConfig endfield_global = new()
+    {
+        SupportedPages =
+        [
+            nameof(GameLauncherPage),
+            nameof(GameSettingPage),
+            nameof(ScreenshotPage),
         ],
     };
 

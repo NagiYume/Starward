@@ -12,7 +12,7 @@ public sealed class HypergryphInstallMetadata
     public const string DownloadsDirectoryName = "downloads";
 
     [JsonPropertyName("app_code")]
-    public string AppCode { get; set; } = HypergryphGameConstants.EndfieldAppCode;
+    public string AppCode { get; set; } = "";
 
     [JsonPropertyName("version")]
     public string Version { get; set; } = "";
@@ -22,6 +22,12 @@ public sealed class HypergryphInstallMetadata
 
     [JsonPropertyName("predownload_fingerprint")]
     public string PredownloadFingerprint { get; set; } = "";
+
+    public bool IsFor(GameBiz gameBiz)
+    {
+        HypergryphGameProfile profile = HypergryphGameConstants.GetGameProfile(gameBiz);
+        return string.Equals(AppCode, profile.GameAppCode, StringComparison.Ordinal);
+    }
 
     public static string GetMetadataDirectory(string installPath)
     {

@@ -165,9 +165,12 @@ public sealed partial class GameSelector : UserControl
             }
         }
         catch { }
-        if (!gameInfos.Any(x => x.GameBiz == GameBiz.endfield_cn))
+        foreach (GameBiz gameBiz in new GameBiz[] { GameBiz.arknights_cn, GameBiz.endfield_cn, GameBiz.endfield_global })
         {
-            gameInfos.Add(HypergryphGameMetadata.CreateEndfieldGameInfo());
+            if (!gameInfos.Any(x => x.GameBiz == gameBiz))
+            {
+                gameInfos.Add(HypergryphGameMetadata.CreateGameInfo(gameBiz));
+            }
         }
         return gameInfos;
     }

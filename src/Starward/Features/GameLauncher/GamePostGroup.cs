@@ -15,13 +15,13 @@ public class GamePostGroup
 
     public static List<GamePostGroup> FromGameContent(GameContent content)
     {
-        bool isEndfield = content.GameId.GameBiz.Value is Starward.Core.GameBiz.endfield_cn;
+        bool isHypergryphGame = Starward.Core.Hypergryph.HypergryphGameConstants.IsHypergryphGame(content.GameId.GameBiz);
         var groups = content.Posts.GroupBy(x => x.Type);
-        var orderedGroups = isEndfield ? groups : groups.OrderBy(x => x.Key);
+        var orderedGroups = isHypergryphGame ? groups : groups.OrderBy(x => x.Key);
         return orderedGroups
                       .Select(x => new GamePostGroup
                       {
-                          Header = isEndfield ? x.Key : LocalizePostType(x.Key),
+                          Header = isHypergryphGame ? x.Key : LocalizePostType(x.Key),
                           List = x.ToList(),
                       }).ToList();
     }

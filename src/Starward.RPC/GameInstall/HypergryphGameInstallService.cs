@@ -40,17 +40,26 @@ internal sealed class HypergryphGameInstallService
                 File.SetAttributes(file, FileAttributes.Normal);
             }
         }
+        HypergryphGameProfile profile = HypergryphGameConstants.GetGameProfile(context.GameId.GameBiz);
         HypergryphInstallMetadata? metadata = await HypergryphInstallMetadata.ReadAsync(context.InstallPath, cancellationToken);
+        if (metadata is not null && !metadata.IsFor(context.GameId.GameBiz))
+        {
+            metadata = null;
+        }
         string localVersion = metadata?.Version ?? "";
-        HypergryphLatestGame latest = await _launcherClient.GetLatestEndfieldAsync(localVersion, cancellationToken);
+        HypergryphLatestGame latest = await _launcherClient.GetLatestGameAsync(
+            context.GameId.GameBiz,
+            localVersion,
+            cancellationToken);
 
-        if (string.IsNullOrWhiteSpace(localVersion) && File.Exists(Path.Combine(context.InstallPath, HypergryphGameConstants.EndfieldExeName)))
+        if (string.IsNullOrWhiteSpace(localVersion) && File.Exists(Path.Combine(context.InstallPath, profile.ExeName)))
         {
             localVersion = await IsLatestOfficialInstallAsync(context, latest, cancellationToken) ? latest.Version : "0.0.0";
             if (localVersion == latest.Version)
             {
                 metadata = new HypergryphInstallMetadata
                 {
+                    AppCode = profile.GameAppCode,
                     Version = latest.Version,
                     GameFilesMD5 = latest.Package.GameFilesMD5,
                 };
@@ -99,7 +108,7 @@ internal sealed class HypergryphGameInstallService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Endfield patch failed. Falling back to the full package.");
+            _logger.LogWarning(ex, "Hypergryph game patch failed. Falling back to the full package.");
             string downloadDirectory = HypergryphInstallMetadata.GetDownloadsDirectory(context.InstallPath);
             DeleteDownloadedFiles(latest.Patch!.DownloadParts.Select(x => Path.Combine(downloadDirectory, x.GetFileName())));
             ResetProgress(context);
@@ -114,16 +123,20 @@ internal sealed class HypergryphGameInstallService
         CancellationToken cancellationToken)
     {
         HypergryphGamePatch patch = latest.PrePatch
-            ?? throw new InvalidOperationException("There is no Endfield pre-download package currently available.");
+            ?? throw new InvalidOperationException("There is no Hypergryph pre-download package currently available.");
         IReadOnlyList<HypergryphPackagePart> parts = patch.DownloadParts;
         if (parts.Count == 0)
         {
-            throw new InvalidOperationException("The Endfield pre-download package is empty.");
+            throw new InvalidOperationException("The Hypergryph pre-download package is empty.");
         }
 
         context.DownloadMode = GameInstallDownloadMode.CompressedPackage;
         await DownloadPartsAsync(context, parts, cancellationToken);
-        metadata ??= new HypergryphInstallMetadata { Version = context.LocalGameVersion ?? "" };
+        metadata ??= new HypergryphInstallMetadata
+        {
+            AppCode = HypergryphGameConstants.GetGameProfile(context.GameId.GameBiz).GameAppCode,
+            Version = context.LocalGameVersion ?? "",
+        };
         metadata.PredownloadFingerprint = patch.GetFingerprint();
         await metadata.WriteAsync(context.InstallPath, cancellationToken);
     }
@@ -133,7 +146,7 @@ internal sealed class HypergryphGameInstallService
         IReadOnlyList<HypergryphPackagePart> parts = latest.Package.Packs;
         if (parts.Count == 0)
         {
-            throw new InvalidDataException("The Endfield full package is empty.");
+            throw new InvalidDataException("The Hypergryph full package is empty.");
         }
 
         context.DownloadMode = GameInstallDownloadMode.CompressedPackage;
@@ -149,7 +162,7 @@ internal sealed class HypergryphGameInstallService
         await InstallLauncherManifestsAsync(context.InstallPath, latest, null, cancellationToken);
         await VerifyInstalledGameAsync(context, latest, cancellationToken);
         context.Progress_WriteFinishBytes = context.Progress_WriteTotalBytes;
-        await WriteInstalledMetadataAsync(context.InstallPath, latest, cancellationToken);
+        await WriteInstalledMetadataAsync(context, latest, cancellationToken);
         DeleteDownloadedFiles(files);
     }
 
@@ -173,7 +186,7 @@ internal sealed class HypergryphGameInstallService
         await InstallLauncherManifestsAsync(context.InstallPath, latest, null, cancellationToken);
         await VerifyInstalledGameAsync(context, latest, cancellationToken);
         context.Progress_WriteFinishBytes = context.Progress_WriteTotalBytes;
-        await WriteInstalledMetadataAsync(context.InstallPath, latest, cancellationToken);
+        await WriteInstalledMetadataAsync(context, latest, cancellationToken);
         DeleteDownloadedFiles(files);
     }
 
@@ -213,7 +226,7 @@ internal sealed class HypergryphGameInstallService
             await VerifyInstalledGameAsync(context, latest, cancellationToken);
             context.Progress_Percent = 1;
             context.Progress_WriteFinishBytes = context.Progress_WriteTotalBytes;
-            await WriteInstalledMetadataAsync(context.InstallPath, latest, cancellationToken);
+            await WriteInstalledMetadataAsync(context, latest, cancellationToken);
             DeleteDownloadedFiles(files);
         }
         finally
@@ -476,28 +489,30 @@ internal sealed class HypergryphGameInstallService
         CancellationToken cancellationToken)
     {
         context.State = GameInstallState.Verifying;
-        string exe = Path.Combine(context.InstallPath, HypergryphGameConstants.EndfieldExeName);
+        HypergryphGameProfile profile = HypergryphGameConstants.GetGameProfile(context.GameId.GameBiz);
+        string exe = Path.Combine(context.InstallPath, profile.ExeName);
         if (!File.Exists(exe))
         {
-            throw new FileNotFoundException("Endfield.exe was not found after installation.", exe);
+            throw new FileNotFoundException($"{profile.ExeName} was not found after installation.", exe);
         }
         if (!await IsLatestOfficialInstallAsync(context, latest, cancellationToken))
         {
-            throw new InvalidDataException("The installed Endfield game_files manifest does not match the latest package.");
+            throw new InvalidDataException("The installed Hypergryph game_files manifest does not match the latest package.");
         }
     }
 
     private static async Task WriteInstalledMetadataAsync(
-        string installPath,
+        GameInstallContext context,
         HypergryphLatestGame latest,
         CancellationToken cancellationToken)
     {
         await new HypergryphInstallMetadata
         {
+            AppCode = HypergryphGameConstants.GetGameProfile(context.GameId.GameBiz).GameAppCode,
             Version = latest.Version,
             GameFilesMD5 = latest.Package.GameFilesMD5,
             PredownloadFingerprint = "",
-        }.WriteAsync(installPath, cancellationToken);
+        }.WriteAsync(context.InstallPath, cancellationToken);
     }
 
     private static void CopyRootOverlay(string stagingPath, string installPath)
