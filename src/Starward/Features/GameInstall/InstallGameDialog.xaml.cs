@@ -105,7 +105,9 @@ public sealed partial class InstallGameDialog : ContentDialog
                 {
                     baseFolder = Path.Combine(
                         Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
-                        HypergryphGameConstants.IsEndfield(CurrentGameId.GameBiz) ? "Hypergryph" : "miHoYo");
+                        HypergryphGameConstants.IsHypergryphGame(CurrentGameId.GameBiz)
+                            ? HypergryphGameConstants.GetGameProfile(CurrentGameId.GameBiz).PublisherDirectory
+                            : "miHoYo");
                 }
             }
             string target = Path.Combine(baseFolder, GetInstallationDirectoryName());
@@ -122,8 +124,8 @@ public sealed partial class InstallGameDialog : ContentDialog
 
     private string GetInstallationDirectoryName()
     {
-        return HypergryphGameConstants.IsEndfield(CurrentGameId.GameBiz)
-            ? HypergryphGameConstants.EndfieldInstallationDirectory
+        return HypergryphGameConstants.IsHypergryphGame(CurrentGameId.GameBiz)
+            ? HypergryphGameConstants.GetGameProfile(CurrentGameId.GameBiz).InstallationDirectory
             : CurrentGameId.GameBiz;
     }
 

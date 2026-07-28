@@ -9,12 +9,24 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Vanara.PInvoke;
 
 namespace Starward.RPC.GameInstall;
 
 internal sealed class HypergryphGameInstallService
 {
     private const int DownloadConcurrency = 4;
+
+    private const int HardLinkConcurrency = 2;
+
+    private static readonly HashSet<string> V2ControlFiles = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "patch.json",
+        "delete_files.txt",
+        "deletefiles.txt",
+        "package_files",
+        "verify_files.json",
+    };
 
     private readonly ILogger<HypergryphGameInstallService> _logger;
     private readonly HypergryphLauncherClient _launcherClient;
@@ -40,17 +52,26 @@ internal sealed class HypergryphGameInstallService
                 File.SetAttributes(file, FileAttributes.Normal);
             }
         }
+        HypergryphGameProfile profile = HypergryphGameConstants.GetGameProfile(context.GameId.GameBiz);
         HypergryphInstallMetadata? metadata = await HypergryphInstallMetadata.ReadAsync(context.InstallPath, cancellationToken);
+        if (metadata is not null && !metadata.IsFor(context.GameId.GameBiz))
+        {
+            metadata = null;
+        }
         string localVersion = metadata?.Version ?? "";
-        HypergryphLatestGame latest = await _launcherClient.GetLatestEndfieldAsync(localVersion, cancellationToken);
+        HypergryphLatestGame latest = await _launcherClient.GetLatestGameAsync(
+            context.GameId.GameBiz,
+            localVersion,
+            cancellationToken);
 
-        if (string.IsNullOrWhiteSpace(localVersion) && File.Exists(Path.Combine(context.InstallPath, HypergryphGameConstants.EndfieldExeName)))
+        if (string.IsNullOrWhiteSpace(localVersion) && File.Exists(Path.Combine(context.InstallPath, profile.ExeName)))
         {
             localVersion = await IsLatestOfficialInstallAsync(context, latest, cancellationToken) ? latest.Version : "0.0.0";
             if (localVersion == latest.Version)
             {
                 metadata = new HypergryphInstallMetadata
                 {
+                    AppCode = profile.GameAppCode,
                     Version = latest.Version,
                     GameFilesMD5 = latest.Package.GameFilesMD5,
                 };
@@ -78,6 +99,22 @@ internal sealed class HypergryphGameInstallService
             default:
                 throw new NotSupportedException($"Unsupported Hypergryph install operation: {context.Operation}.");
         }
+
+        if (context.Operation is not GameInstallOperation.Predownload)
+        {
+            try
+            {
+                await HardLinkMatchingVfsFilesAsync(context, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to hard link matching Endfield VFS files.");
+            }
+        }
     }
 
     private async Task ExecuteUpdateWithFallbackAsync(GameInstallContext context, HypergryphLatestGame latest, CancellationToken cancellationToken)
@@ -99,7 +136,7 @@ internal sealed class HypergryphGameInstallService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Endfield patch failed. Falling back to the full package.");
+            _logger.LogWarning(ex, "Hypergryph game patch failed. Falling back to the full package.");
             string downloadDirectory = HypergryphInstallMetadata.GetDownloadsDirectory(context.InstallPath);
             DeleteDownloadedFiles(latest.Patch!.DownloadParts.Select(x => Path.Combine(downloadDirectory, x.GetFileName())));
             ResetProgress(context);
@@ -114,16 +151,20 @@ internal sealed class HypergryphGameInstallService
         CancellationToken cancellationToken)
     {
         HypergryphGamePatch patch = latest.PrePatch
-            ?? throw new InvalidOperationException("There is no Endfield pre-download package currently available.");
+            ?? throw new InvalidOperationException("There is no Hypergryph pre-download package currently available.");
         IReadOnlyList<HypergryphPackagePart> parts = patch.DownloadParts;
         if (parts.Count == 0)
         {
-            throw new InvalidOperationException("The Endfield pre-download package is empty.");
+            throw new InvalidOperationException("The Hypergryph pre-download package is empty.");
         }
 
         context.DownloadMode = GameInstallDownloadMode.CompressedPackage;
         await DownloadPartsAsync(context, parts, cancellationToken);
-        metadata ??= new HypergryphInstallMetadata { Version = context.LocalGameVersion ?? "" };
+        metadata ??= new HypergryphInstallMetadata
+        {
+            AppCode = HypergryphGameConstants.GetGameProfile(context.GameId.GameBiz).GameAppCode,
+            Version = context.LocalGameVersion ?? "",
+        };
         metadata.PredownloadFingerprint = patch.GetFingerprint();
         await metadata.WriteAsync(context.InstallPath, cancellationToken);
     }
@@ -133,13 +174,14 @@ internal sealed class HypergryphGameInstallService
         IReadOnlyList<HypergryphPackagePart> parts = latest.Package.Packs;
         if (parts.Count == 0)
         {
-            throw new InvalidDataException("The Endfield full package is empty.");
+            throw new InvalidDataException("The Hypergryph full package is empty.");
         }
 
         context.DownloadMode = GameInstallDownloadMode.CompressedPackage;
         IReadOnlyList<string> files = await DownloadPartsAsync(context, parts, cancellationToken);
         GameInstallFile package = CreateCompressedPackage(context.InstallPath, parts, latest.Package.TotalSize);
 
+        await BreakHardLinksAsync(context, cancellationToken);
         context.State = GameInstallState.Decompressing;
         context.Progress_WriteTotalBytes = latest.Package.TotalSize;
         context.Progress_WriteFinishBytes = 0;
@@ -149,7 +191,7 @@ internal sealed class HypergryphGameInstallService
         await InstallLauncherManifestsAsync(context.InstallPath, latest, null, cancellationToken);
         await VerifyInstalledGameAsync(context, latest, cancellationToken);
         context.Progress_WriteFinishBytes = context.Progress_WriteTotalBytes;
-        await WriteInstalledMetadataAsync(context.InstallPath, latest, cancellationToken);
+        await WriteInstalledMetadataAsync(context, latest, cancellationToken);
         DeleteDownloadedFiles(files);
     }
 
@@ -164,6 +206,7 @@ internal sealed class HypergryphGameInstallService
         IReadOnlyList<string> files = await DownloadPartsAsync(context, parts, cancellationToken);
         GameInstallFile package = CreateCompressedPackage(context.InstallPath, parts, patch.TotalSize);
 
+        await BreakHardLinksAsync(context, cancellationToken);
         context.State = GameInstallState.Decompressing;
         context.Progress_WriteTotalBytes = patch.TotalSize;
         context.Progress_WriteFinishBytes = 0;
@@ -173,7 +216,7 @@ internal sealed class HypergryphGameInstallService
         await InstallLauncherManifestsAsync(context.InstallPath, latest, null, cancellationToken);
         await VerifyInstalledGameAsync(context, latest, cancellationToken);
         context.Progress_WriteFinishBytes = context.Progress_WriteTotalBytes;
-        await WriteInstalledMetadataAsync(context.InstallPath, latest, cancellationToken);
+        await WriteInstalledMetadataAsync(context, latest, cancellationToken);
         DeleteDownloadedFiles(files);
     }
 
@@ -185,7 +228,6 @@ internal sealed class HypergryphGameInstallService
     {
         context.DownloadMode = GameInstallDownloadMode.CompressedPackage | GameInstallDownloadMode.Patch;
         IReadOnlyList<string> files = await DownloadPartsAsync(context, patch.Patches, cancellationToken);
-        HypergryphPatchManifest manifest = await _launcherClient.GetPatchManifestAsync(patch, cancellationToken);
         GameInstallFile package = CreateCompressedPackage(context.InstallPath, patch.Patches, patch.TotalSize);
         string stagingPath = Path.Combine(HypergryphInstallMetadata.GetMetadataDirectory(context.InstallPath), "patch-staging");
 
@@ -205,15 +247,19 @@ internal sealed class HypergryphGameInstallService
                 stagingPath,
                 applyPackageDiff: false);
 
+            HypergryphPatchManifest manifest = await ReadV2PatchManifestAsync(stagingPath, patch, cancellationToken);
+            HypergryphV2VerifyManifest verifyManifest = await ReadV2VerifyManifestAsync(stagingPath, cancellationToken);
             context.State = GameInstallState.Merging;
             await ApplyV2ManifestAsync(context, stagingPath, manifest, cancellationToken);
-            CopyRootOverlay(stagingPath, context.InstallPath);
+            MoveRootOverlay(stagingPath, context.InstallPath);
             await DeleteListedFilesAsync(stagingPath, context.InstallPath, cancellationToken);
+            File.Delete(GetSafePath(context.InstallPath, "verify_files.json"));
             await InstallLauncherManifestsAsync(context.InstallPath, latest, patch, cancellationToken);
+            await VerifyV2FilesAsync(context, verifyManifest, cancellationToken);
             await VerifyInstalledGameAsync(context, latest, cancellationToken);
             context.Progress_Percent = 1;
             context.Progress_WriteFinishBytes = context.Progress_WriteTotalBytes;
-            await WriteInstalledMetadataAsync(context.InstallPath, latest, cancellationToken);
+            await WriteInstalledMetadataAsync(context, latest, cancellationToken);
             DeleteDownloadedFiles(files);
         }
         finally
@@ -351,8 +397,7 @@ internal sealed class HypergryphGameInstallService
             throw new InvalidDataException($"The Endfield replacement file does not match: {source}.");
         }
         Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-        File.Copy(source, target, true);
-        Interlocked.Add(ref context.storageWriteBytes, size);
+        File.Move(source, target, true);
     }
 
     private async Task<bool> MatchesAsync(GameInstallContext context, string path, long size, string md5, CancellationToken cancellationToken)
@@ -476,48 +521,287 @@ internal sealed class HypergryphGameInstallService
         CancellationToken cancellationToken)
     {
         context.State = GameInstallState.Verifying;
-        string exe = Path.Combine(context.InstallPath, HypergryphGameConstants.EndfieldExeName);
+        HypergryphGameProfile profile = HypergryphGameConstants.GetGameProfile(context.GameId.GameBiz);
+        string exe = Path.Combine(context.InstallPath, profile.ExeName);
         if (!File.Exists(exe))
         {
-            throw new FileNotFoundException("Endfield.exe was not found after installation.", exe);
+            throw new FileNotFoundException($"{profile.ExeName} was not found after installation.", exe);
         }
         if (!await IsLatestOfficialInstallAsync(context, latest, cancellationToken))
         {
-            throw new InvalidDataException("The installed Endfield game_files manifest does not match the latest package.");
+            throw new InvalidDataException("The installed Hypergryph game_files manifest does not match the latest package.");
         }
     }
 
     private static async Task WriteInstalledMetadataAsync(
-        string installPath,
+        GameInstallContext context,
         HypergryphLatestGame latest,
         CancellationToken cancellationToken)
     {
         await new HypergryphInstallMetadata
         {
+            AppCode = HypergryphGameConstants.GetGameProfile(context.GameId.GameBiz).GameAppCode,
             Version = latest.Version,
             GameFilesMD5 = latest.Package.GameFilesMD5,
             PredownloadFingerprint = "",
-        }.WriteAsync(installPath, cancellationToken);
+        }.WriteAsync(context.InstallPath, cancellationToken);
     }
 
-    private static void CopyRootOverlay(string stagingPath, string installPath)
+    private static void MoveRootOverlay(string stagingPath, string installPath)
     {
         string vfsFiles = Path.Combine(stagingPath, "vfs_files");
-        foreach (string file in Directory.EnumerateFiles(stagingPath, "*", SearchOption.AllDirectories))
+        foreach (string file in Directory.EnumerateFiles(stagingPath, "*", SearchOption.AllDirectories).ToArray())
         {
             if (IsWithin(file, vfsFiles))
             {
                 continue;
             }
             string relative = Path.GetRelativePath(stagingPath, file);
-            if (relative is "patch.json" or "delete_files.txt" or "deletefiles.txt")
+            if (V2ControlFiles.Contains(relative))
             {
                 continue;
             }
             string target = GetSafePath(installPath, relative);
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-            File.Copy(file, target, true);
+            File.Move(file, target, true);
         }
+    }
+
+
+    private static async Task<HypergryphV2VerifyManifest> ReadV2VerifyManifestAsync(string stagingPath, CancellationToken cancellationToken)
+    {
+        string path = GetSafePath(stagingPath, "verify_files.json");
+        if (!File.Exists(path))
+        {
+            throw new FileNotFoundException("The Hypergryph V2 verify manifest is missing.", path);
+        }
+        await using FileStream stream = File.OpenRead(path);
+        return await JsonSerializer.DeserializeAsync<HypergryphV2VerifyManifest>(stream, cancellationToken: cancellationToken)
+            ?? throw new InvalidDataException("The Hypergryph V2 verify manifest is empty.");
+    }
+
+
+    private static async Task<HypergryphPatchManifest> ReadV2PatchManifestAsync(
+        string stagingPath,
+        HypergryphGamePatch patch,
+        CancellationToken cancellationToken)
+    {
+        string path = GetSafePath(stagingPath, "patch.json");
+        if (!File.Exists(path))
+        {
+            throw new FileNotFoundException("The Hypergryph V2 patch manifest is missing.", path);
+        }
+        byte[] bytes = await File.ReadAllBytesAsync(path, cancellationToken);
+        if (patch.V2PatchInfoSize > 0 && bytes.LongLength != patch.V2PatchInfoSize)
+        {
+            throw new InvalidDataException("The Hypergryph V2 patch manifest size does not match.");
+        }
+        if (!string.IsNullOrWhiteSpace(patch.V2PatchInfoMD5))
+        {
+            string md5 = Convert.ToHexStringLower(MD5.HashData(bytes));
+            if (!string.Equals(md5, patch.V2PatchInfoMD5, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException("The Hypergryph V2 patch manifest MD5 does not match.");
+            }
+        }
+        return JsonSerializer.Deserialize<HypergryphPatchManifest>(bytes)
+            ?? throw new InvalidDataException("The Hypergryph V2 patch manifest is empty.");
+    }
+
+
+    private async Task VerifyV2FilesAsync(
+        GameInstallContext context,
+        HypergryphV2VerifyManifest manifest,
+        CancellationToken cancellationToken)
+    {
+        foreach (HypergryphVerifyFile file in manifest.Move.Concat(manifest.Patch))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (string.IsNullOrWhiteSpace(file.Path)
+                || file.Size < 0
+                || string.IsNullOrWhiteSpace(file.MD5))
+            {
+                throw new InvalidDataException("The Hypergryph V2 verify manifest contains an invalid file.");
+            }
+            string path = GetSafePath(context.InstallPath, file.Path);
+            if (!await MatchesAsync(context, path, file.Size, file.MD5, cancellationToken))
+            {
+                throw new InvalidDataException($"The verified Endfield file does not match: {file.Path}.");
+            }
+        }
+    }
+
+
+    private async Task BreakHardLinksAsync(GameInstallContext context, CancellationToken cancellationToken)
+    {
+        if (!Directory.Exists(context.InstallPath))
+        {
+            return;
+        }
+
+        string metadataRoot = HypergryphInstallMetadata.GetMetadataDirectory(context.InstallPath);
+        string[] files = Directory
+            .EnumerateFiles(context.InstallPath, "*", SearchOption.AllDirectories)
+            .Where(x => !IsWithin(x, metadataRoot))
+            .ToArray();
+        int unlinkedFiles = 0;
+        long unlinkedBytes = 0;
+        context.State = GameInstallState.Merging;
+        await Parallel.ForEachAsync(
+            files,
+            new ParallelOptions { CancellationToken = cancellationToken, MaxDegreeOfParallelism = HardLinkConcurrency },
+            async (file, token) =>
+            {
+                if (!TryGetFileInformation(file, out Kernel32.BY_HANDLE_FILE_INFORMATION info) || info.nNumberOfLinks <= 1)
+                {
+                    return;
+                }
+
+                string temporaryPath = file + ".starward_unlink";
+                try
+                {
+                    File.Delete(temporaryPath);
+                    await using (FileStream source = File.OpenRead(file))
+                    await using (FileStream target = File.Create(temporaryPath))
+                    {
+                        await source.CopyToAsync(target, token);
+                    }
+                    File.Move(temporaryPath, file, true);
+                    Interlocked.Increment(ref unlinkedFiles);
+                    Interlocked.Add(ref unlinkedBytes, new FileInfo(file).Length);
+                }
+                finally
+                {
+                    File.Delete(temporaryPath);
+                }
+            });
+        if (unlinkedFiles > 0)
+        {
+            _logger.LogInformation(
+                "Unlinked {Count} Hypergryph game files ({Bytes} bytes) before package extraction.",
+                unlinkedFiles,
+                unlinkedBytes);
+        }
+    }
+
+
+    private async Task HardLinkMatchingVfsFilesAsync(GameInstallContext context, CancellationToken cancellationToken)
+    {
+        if (!CanUseHardLink(context))
+        {
+            return;
+        }
+
+        string relativeVfsPath = Path.Combine("Endfield_Data", "StreamingAssets", "VFS");
+        string sourceRoot = GetSafePath(context.HardLinkPath!, relativeVfsPath);
+        string targetRoot = GetSafePath(context.InstallPath, relativeVfsPath);
+        if (!Directory.Exists(sourceRoot) || !Directory.Exists(targetRoot))
+        {
+            return;
+        }
+
+        int linkedFiles = 0;
+        long linkedBytes = 0;
+        context.State = GameInstallState.Merging;
+        await Parallel.ForEachAsync(
+            Directory.EnumerateFiles(targetRoot, "*", SearchOption.AllDirectories).ToArray(),
+            new ParallelOptions { CancellationToken = cancellationToken, MaxDegreeOfParallelism = HardLinkConcurrency },
+            async (target, token) =>
+            {
+                string relative = Path.GetRelativePath(targetRoot, target);
+                string source = GetSafePath(sourceRoot, relative);
+                if (AreSameFile(source, target) || !await FilesMatchAsync(context, source, target, token))
+                {
+                    return;
+                }
+
+                string temporaryPath = target + ".starward_link";
+                try
+                {
+                    File.Delete(temporaryPath);
+                    if (Kernel32.CreateHardLink(temporaryPath, source))
+                    {
+                        File.Move(temporaryPath, target, true);
+                        Interlocked.Increment(ref linkedFiles);
+                        Interlocked.Add(ref linkedBytes, new FileInfo(source).Length);
+                    }
+                }
+                finally
+                {
+                    File.Delete(temporaryPath);
+                }
+            });
+        _logger.LogInformation(
+            "Hard linked {Count} Endfield VFS files ({Bytes} bytes) from {SourcePath}.",
+            linkedFiles,
+            linkedBytes,
+            context.HardLinkPath);
+    }
+
+
+    private static bool CanUseHardLink(GameInstallContext context)
+    {
+        return Directory.Exists(context.HardLinkPath)
+            && !string.Equals(Path.GetFullPath(context.InstallPath), Path.GetFullPath(context.HardLinkPath!), StringComparison.OrdinalIgnoreCase)
+            && !IsWithin(context.InstallPath, context.HardLinkPath!)
+            && !IsWithin(context.HardLinkPath!, context.InstallPath)
+            && string.Equals(Path.GetPathRoot(context.InstallPath), Path.GetPathRoot(context.HardLinkPath), StringComparison.OrdinalIgnoreCase)
+            && string.Equals(DriveHelper.GetDriveFormat(context.InstallPath), "NTFS", StringComparison.OrdinalIgnoreCase);
+    }
+
+
+    private static bool AreSameFile(string first, string second)
+    {
+        return TryGetFileInformation(first, out Kernel32.BY_HANDLE_FILE_INFORMATION firstInfo)
+            && TryGetFileInformation(second, out Kernel32.BY_HANDLE_FILE_INFORMATION secondInfo)
+            && firstInfo.dwVolumeSerialNumber == secondInfo.dwVolumeSerialNumber
+            && firstInfo.nFileIndexHigh == secondInfo.nFileIndexHigh
+            && firstInfo.nFileIndexLow == secondInfo.nFileIndexLow;
+    }
+
+
+    private static bool TryGetFileInformation(string path, out Kernel32.BY_HANDLE_FILE_INFORMATION info)
+    {
+        using Kernel32.SafeHFILE handle = Kernel32.CreateFile(
+            path,
+            0,
+            FileShare.ReadWrite | FileShare.Delete,
+            null,
+            FileMode.Open,
+            0,
+            HFILE.NULL);
+        if (handle.IsInvalid)
+        {
+            info = default;
+            return false;
+        }
+        return Kernel32.GetFileInformationByHandle(handle, out info);
+    }
+
+
+    private static async Task<bool> FilesMatchAsync(
+        GameInstallContext context,
+        string source,
+        string target,
+        CancellationToken cancellationToken)
+    {
+        if (!File.Exists(source) || !File.Exists(target))
+        {
+            return false;
+        }
+        FileInfo sourceInfo = new(source);
+        FileInfo targetInfo = new(target);
+        if (sourceInfo.Length != targetInfo.Length)
+        {
+            return false;
+        }
+
+        await using FileStream sourceStream = File.OpenRead(source);
+        await using FileStream targetStream = File.OpenRead(target);
+        byte[] sourceHash = await MD5.HashDataAsync(sourceStream, cancellationToken);
+        byte[] targetHash = await MD5.HashDataAsync(targetStream, cancellationToken);
+        Interlocked.Add(ref context.storageReadBytes, sourceInfo.Length + targetInfo.Length);
+        return sourceHash.AsSpan().SequenceEqual(targetHash);
     }
 
     private static async Task DeleteListedFilesAsync(string installPath, CancellationToken cancellationToken)

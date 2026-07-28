@@ -46,6 +46,7 @@ public class GameRegistry
     public const string GamePath_nap_global = @"HKEY_CURRENT_USER\Software\miHoYo\ZenlessZoneZero";
 
     public const string GamePath_endfield_cn = @"HKEY_CURRENT_USER\Software\Hypergryph\Endfield";
+    public const string GamePath_endfield_global = @"HKEY_CURRENT_USER\Software\Gryphline\Endfield";
 
 
 

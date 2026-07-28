@@ -162,6 +162,9 @@
   <data name="Game_GenshinImpact" xml:space="preserve">
     <value>Genshin Impact</value>
   </data>
+  <data name="Game_Arknights" xml:space="preserve">
+    <value>Arknights</value>
+  </data>
   <data name="Game_ArknightsEndfield" xml:space="preserve">
     <value>Arknights: Endfield</value>
   </data>

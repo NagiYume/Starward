@@ -268,6 +268,15 @@ namespace Starward.Core.Localization {
         }
 
         /// <summary>
+        ///   查找类似 Arknights 的本地化字符串。
+        /// </summary>
+        public static string Game_Arknights {
+            get {
+                return ResourceManager.GetString("Game_Arknights", resourceCulture);
+            }
+        }
+
+        /// <summary>
         ///   查找类似 Arknights: Endfield 的本地化字符串。
         /// </summary>
         public static string Game_ArknightsEndfield {

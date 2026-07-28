@@ -50,9 +50,9 @@ public class HoYoPlayService
 
     public async Task<GameInfo> GetGameInfoAsync(GameId gameId, CancellationToken cancellationToken = default)
     {
-        if (HypergryphGameConstants.IsEndfield(gameId.GameBiz))
+        if (HypergryphGameConstants.IsHypergryphGame(gameId.GameBiz))
         {
-            return HypergryphGameMetadata.CreateEndfieldGameInfo();
+            return HypergryphGameMetadata.CreateGameInfo(gameId.GameBiz);
         }
         if (!_memoryCache.TryGetValue($"{nameof(GameInfo)}_{gameId.Id}", out GameInfo? info))
         {
@@ -91,9 +91,15 @@ public class HoYoPlayService
         {
             infos.AddRange(await _client.GetGameInfoAsync(launcherId, lang, cancellationToken));
         }
-        if (!infos.Any(x => HypergryphGameConstants.IsEndfield(x.GameBiz)))
+        GameBiz[] hypergryphGameBizs = LanguageUtil.FilterLanguage(lang) is "zh-cn"
+            ? [GameBiz.arknights_cn, GameBiz.endfield_cn, GameBiz.endfield_global]
+            : [GameBiz.endfield_global, GameBiz.arknights_cn, GameBiz.endfield_cn];
+        foreach (GameBiz gameBiz in hypergryphGameBizs)
         {
-            infos.Add(HypergryphGameMetadata.CreateEndfieldGameInfo());
+            if (!infos.Any(x => x.GameBiz == gameBiz))
+            {
+                infos.Add(HypergryphGameMetadata.CreateGameInfo(gameBiz));
+            }
         }
         foreach (var item in infos)
         {
@@ -162,9 +168,9 @@ public class HoYoPlayService
 
     public async Task<GameBackgroundInfo> GetGameBackgroundAsync(GameId gameId, CancellationToken cancellationToken = default)
     {
-        if (HypergryphGameConstants.IsEndfield(gameId.GameBiz))
+        if (HypergryphGameConstants.IsHypergryphGame(gameId.GameBiz))
         {
-            return HypergryphGameMetadata.CreateEndfieldBackgroundInfo();
+            return HypergryphGameMetadata.CreateBackgroundInfo(gameId.GameBiz);
         }
         if (!_memoryCache.TryGetValue($"{nameof(GameBackgroundInfo)}_{gameId.Id}", out GameBackgroundInfo? background))
         {
@@ -183,13 +189,16 @@ public class HoYoPlayService
 
     public async Task<GameContent> GetGameContentAsync(GameId gameId, CancellationToken cancellationToken = default)
     {
-        if (HypergryphGameConstants.IsEndfield(gameId.GameBiz))
+        if (HypergryphGameConstants.IsHypergryphGame(gameId.GameBiz))
         {
             string key = $"{nameof(GameContent)}_{gameId.Id}";
             if (!_memoryCache.TryGetValue(key, out GameContent? endfieldContent))
             {
-                HypergryphLauncherContent launcherContent = await _hypergryphLauncherClient.GetEndfieldContentAsync(CultureInfo.CurrentUICulture.Name, cancellationToken);
-                endfieldContent = HypergryphGameMetadata.CreateEndfieldGameContent(launcherContent);
+                HypergryphLauncherContent launcherContent = await _hypergryphLauncherClient.GetGameContentAsync(
+                    gameId.GameBiz,
+                    CultureInfo.CurrentUICulture.Name,
+                    cancellationToken);
+                endfieldContent = HypergryphGameMetadata.CreateGameContent(gameId.GameBiz, launcherContent);
                 _memoryCache.Set(key, endfieldContent, TimeSpan.FromMinutes(1));
             }
             return endfieldContent!;
@@ -207,10 +216,13 @@ public class HoYoPlayService
 
     public async Task<GamePackage> GetGamePackageAsync(GameId gameId, CancellationToken cancellationToken = default)
     {
-        if (HypergryphGameConstants.IsEndfield(gameId.GameBiz))
+        if (HypergryphGameConstants.IsHypergryphGame(gameId.GameBiz))
         {
-            HypergryphLatestGame latest = await _hypergryphLauncherClient.GetLatestEndfieldAsync(null, cancellationToken);
-            return HypergryphGameMetadata.CreateEndfieldGamePackage(latest);
+            HypergryphLatestGame latest = await _hypergryphLauncherClient.GetLatestGameAsync(
+                gameId.GameBiz,
+                null,
+                cancellationToken);
+            return HypergryphGameMetadata.CreateGamePackage(gameId.GameBiz, latest);
         }
         if (!_memoryCache.TryGetValue($"{nameof(GamePackage)}_{gameId.Id}", out GamePackage? package))
         {
@@ -229,9 +241,9 @@ public class HoYoPlayService
 
     public async Task<GameConfig?> GetGameConfigAsync(GameId gameId, CancellationToken cancellationToken = default)
     {
-        if (HypergryphGameConstants.IsEndfield(gameId.GameBiz))
+        if (HypergryphGameConstants.IsHypergryphGame(gameId.GameBiz))
         {
-            return HypergryphGameMetadata.CreateEndfieldGameConfig();
+            return HypergryphGameMetadata.CreateGameConfig(gameId.GameBiz);
         }
         if (!_memoryCache.TryGetValue($"{nameof(GameConfig)}_{gameId.Id}", out GameConfig? config))
         {
@@ -333,7 +345,7 @@ public class HoYoPlayService
 
     public async Task<List<GameDXConfig>> GetGameDXConfigsAsync(IEnumerable<GameId> gameIds, CancellationToken cancellationToken = default)
     {
-        if (gameIds.Any(x => HypergryphGameConstants.IsEndfield(x.GameBiz)))
+        if (gameIds.Any(x => HypergryphGameConstants.IsHypergryphGame(x.GameBiz)))
         {
             return [];
         }

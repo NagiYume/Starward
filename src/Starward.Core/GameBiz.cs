@@ -53,8 +53,13 @@ public record struct GameBiz
     public const string nap_bilibili = "nap_bilibili";
 
 
+    public const string arknights = "arknights";
+    public const string arknights_cn = "arknights_cn";
+
+
     public const string endfield = "endfield";
     public const string endfield_cn = "endfield_cn";
+    public const string endfield_global = "endfield_global";
 
 
     public const string None = "";
@@ -82,7 +87,9 @@ public record struct GameBiz
         nap_cn,
         nap_global,
         nap_bilibili,
+        arknights_cn,
         endfield_cn,
+        endfield_global,
     }.AsReadOnly();
 
 
@@ -110,7 +117,8 @@ public record struct GameBiz
         //clgm_cn or clgm_global => true,
         hkrpg_cn or hkrpg_global or hkrpg_bilibili => true,
         nap_cn or nap_global or nap_bilibili => true,
-        endfield_cn => true,
+        arknights_cn => true,
+        endfield_cn or endfield_global => true,
         _ => false,
     };
 
@@ -134,6 +142,7 @@ public record struct GameBiz
         hk4e => CoreLang.Game_GenshinImpact,
         hkrpg => CoreLang.Game_HonkaiStarRail,
         nap => CoreLang.Game_ZZZ,
+        arknights => CoreLang.Game_Arknights,
         endfield => CoreLang.Game_ArknightsEndfield,
         _ => "",
     };
@@ -164,6 +173,7 @@ public record struct GameBiz
         nap_cn or nap_bilibili => GameRegistry.GamePath_nap_cn,
         nap_global => GameRegistry.GamePath_nap_global,
         endfield_cn => GameRegistry.GamePath_endfield_cn,
+        endfield_global => GameRegistry.GamePath_endfield_global,
         _ => "HKEY_CURRENT_USER",
     };
 
