@@ -113,6 +113,7 @@ internal partial class GameFeatureConfig
             nameof(ScreenshotPage),
             nameof(EndfieldGachaPage),
         ],
+        SupportHardLink = true,
     };
 
 
@@ -124,6 +125,7 @@ internal partial class GameFeatureConfig
             nameof(GameSettingPage),
             nameof(ScreenshotPage),
         ],
+        SupportHardLink = true,
     };
 
 

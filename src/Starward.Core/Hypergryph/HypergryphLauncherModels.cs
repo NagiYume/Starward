@@ -177,6 +177,27 @@ public sealed class HypergryphPatchManifest
     public List<HypergryphPatchFile> Files { get; set; } = [];
 }
 
+public sealed class HypergryphV2VerifyManifest
+{
+    [JsonPropertyName("move")]
+    public List<HypergryphVerifyFile> Move { get; set; } = [];
+
+    [JsonPropertyName("patch")]
+    public List<HypergryphVerifyFile> Patch { get; set; } = [];
+}
+
+public sealed class HypergryphVerifyFile
+{
+    [JsonPropertyName("path")]
+    public string Path { get; set; } = "";
+
+    [JsonPropertyName("md5")]
+    public string MD5 { get; set; } = "";
+
+    [JsonPropertyName("size")]
+    public long Size { get; set; }
+}
+
 public sealed class HypergryphPatchFile
 {
     [JsonPropertyName("name")]
