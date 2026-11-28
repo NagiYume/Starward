@@ -753,6 +753,16 @@ public sealed partial class GameLauncherPage : PageBase
     {
         try
         {
+            if (CurrentGameId is GameId gameId && GameInstallPath is string path && HypergryphGameConstants.IsArknights(gameId.GameBiz))
+            {
+                // The official launcher may have updated this installation since the page was opened.
+                Version? version = await _gameLauncherService.GetLocalGameVersionAsync(gameId, path, UnloadCancellationToken);
+                if (CurrentGameId != gameId || !string.Equals(path, GameInstallPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+                localGameVersion = version;
+            }
             if (localGameVersion is not null && latestGameVersion > localGameVersion)
             {
                 GameInstallProgress? task = await _gameInstallService.StartUpdateAsync(CurrentGameId, GameInstallPath!, UnloadCancellationToken);

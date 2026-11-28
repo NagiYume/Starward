@@ -145,12 +145,16 @@ public sealed class HypergryphLauncherClient
         }
     }
 
-    public static IReadOnlyList<HypergryphVerifyFile> ReadEndfieldGameFiles(byte[] encrypted)
+    internal static byte[] DecryptLauncherFile(byte[] encrypted)
     {
-        // The launcher uses the same AES-CBC format across Endfield channels.
         using Aes aes = Aes.Create();
         aes.Key = Convert.FromHexString("C0F30E1CE763BBC21CC355A34303AC50399444BFF68C4A22AF398C0A166EE143");
-        byte[] decrypted = aes.DecryptCbc(encrypted, Convert.FromHexString("33467861192750649501937264608400"));
+        return aes.DecryptCbc(encrypted, Convert.FromHexString("33467861192750649501937264608400"));
+    }
+
+    public static IReadOnlyList<HypergryphVerifyFile> ReadEndfieldGameFiles(byte[] encrypted)
+    {
+        byte[] decrypted = DecryptLauncherFile(encrypted);
         using StreamReader reader = new(new MemoryStream(decrypted), Encoding.UTF8);
         var files = new List<HypergryphVerifyFile>();
         var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

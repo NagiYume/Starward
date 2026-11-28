@@ -211,6 +211,23 @@ internal partial class GameLauncherService
         if (HypergryphGameConstants.IsHypergryphGame(gameBiz))
         {
             HypergryphGameProfile profile = HypergryphGameConstants.GetGameProfile(gameId);
+            if (HypergryphGameConstants.IsArknights(gameBiz))
+            {
+                try
+                {
+                    Version? installedVersion = await HypergryphGameConfig.GetArknightsInstallVersionAsync(gameId, installPath, cancellation);
+                    if (installedVersion is not null)
+                    {
+                        return installedVersion;
+                    }
+                }
+                catch (InvalidDataException ex)
+                {
+                    _logger.LogWarning(ex, "Arknights installation does not match its official configuration.");
+                    return null;
+                }
+            }
+
             HypergryphInstallMetadata? metadata = await HypergryphInstallMetadata.ReadAsync(installPath);
             Version? metadataVersion = null;
             if (metadata?.IsFor(gameId) is true
@@ -280,7 +297,7 @@ internal partial class GameLauncherService
     {
         if (HypergryphGameConstants.IsHypergryphGame(gameId.GameBiz))
         {
-            Version? localVersion = await GetLocalGameVersionAsync(gameId);
+            Version? localVersion = await GetLocalGameVersionAsync(gameId, cancellation: cancellation);
             HypergryphLatestGame latest = await _hypergryphLauncherClient.GetLatestGameAsync(
                 gameId,
                 localVersion?.ToString(), cancellation);

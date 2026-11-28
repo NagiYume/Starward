@@ -53,6 +53,21 @@ internal sealed class HypergryphInstallStep : PackageStepBase
             metadata = null;
         }
         string localVersion = metadata?.Version ?? "";
+        if (HypergryphGameConstants.IsArknights(context.GameId.GameBiz)
+            && context.Operation is GameInstallOperation.Update or GameInstallOperation.Predownload)
+        {
+            // A paused extraction may have replaced config.ini before the matching executable.
+            string downloads = HypergryphInstallMetadata.GetDownloadsDirectory(context.InstallPath);
+            bool hasStagedUpdate = context.Operation == GameInstallOperation.Update && Directory.Exists(downloads)
+                && Directory.EnumerateFiles(downloads).Any();
+            Version? installedVersion = await HypergryphGameConfig.GetArknightsInstallVersionAsync(
+                context.GameId, context.InstallPath, cancellationToken, allowIncompleteExecutable: hasStagedUpdate);
+            if (installedVersion is not null)
+            {
+                localVersion = installedVersion.ToString();
+            }
+        }
+
         HypergryphLatestGame latest = await _launcherClient.GetLatestGameAsync(
             context.GameId,
             localVersion,
